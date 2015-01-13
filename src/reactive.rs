@@ -16,7 +16,7 @@ pub trait Subscriber {
     }
 }
 
-pub trait Publisher<'S> {
+pub trait Publisher<'a> {
     type Output;
     fn subscribe<S>(&mut self, Box<S>) where S : Subscriber<Input=Self::Output>;
 
