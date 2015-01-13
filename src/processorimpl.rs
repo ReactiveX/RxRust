@@ -396,7 +396,7 @@ Q : Sendable<Item=I> {
 
 /// Unzip
 /// takes tuples of identical items as input
-/// unpacks them isizeo their own message
+/// unpacks them into their own message
 ///
 pub struct Unzip<'a, I>
 {
@@ -444,7 +444,7 @@ impl<'a, I> Subscriber for Unzip<'a, I>
 
 /// Take
 /// takes tuples of identical items as input
-/// unpacks them isizeo their own message
+/// unpacks them into their own message
 ///
 pub struct Take<'a, O>
 {
