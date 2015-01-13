@@ -1,0 +1,32 @@
+[package]
+
+name = "rx"
+version = "0.0.1"
+authors = ["Rick Richardson <rick.richardson@gmail.com>"]
+
+[dependencies]
+log="*"
+time="*"
+quickcheck="*"
+regex="*"
+
+[dependencies.nix]
+git = "https://github.com/carllerche/nix-rust"
+
+[dependencies.mio]
+
+git = "https://github.com/carllerche/mio"
+
+[dependencies.iobuf]
+
+git = "https://github.com/cgaebel/iobuf"
+
+[dependencies.lazy_static]
+
+git = "https://github.com/Kimundi/lazy-static.rs"
+
+[[test]]
+
+name = "test"
+path = "test/test.rs"
+
