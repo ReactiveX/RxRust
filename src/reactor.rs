@@ -54,7 +54,7 @@ pub type Sender = EventLoopSender<StreamBuf>;
 struct Connection {
         sock: TcpSocket,
         outbuf: DList<AROIobuf>,
-        isizeerest: event::Interest,
+        interest: event::Interest,
         conn_tx: SyncSender<StreamBuf>
 }
 
@@ -63,7 +63,7 @@ impl Connection {
         Connection {
             sock: s,
             outbuf: DList::new(),
-            isizeerest: event::HUP,
+            interest: event::HUP,
             conn_tx: tx
         }
     }
@@ -98,7 +98,7 @@ impl<'a> NetEngine<'a> {
      }
 
     /// connect to the supplied hostname and port
-    /// any data that arrives on the connection will be put isizeo a Buf
+    /// any data that arrives on the connection will be put into a Buf
     /// and sent down the supplied Sender channel along with the Token of the connection
     pub fn connect<'b>(&mut self,
                    hostname: &str,
@@ -108,7 +108,7 @@ impl<'a> NetEngine<'a> {
 
     /// listen on the supplied ip address and port
     /// any new connections will be accepted and polled for read events
-    /// all datagrams that arrive will be put isizeo StreamBufs with their
+    /// all datagrams that arrive will be put into StreamBufs with their
     /// corresponding token, and added to the default outbound data queue
     /// this can be called multiple times for different ips/ports
     pub fn listen<'b>(&mut self,
@@ -195,7 +195,7 @@ impl<'a> EngineInner<'a> {
                         },
                         Err(e)      => Err(format!("Failed to register with the event loop, error: {:?}", e))
                     },
-                    _ => Err(format!("Failed to insert isizeo connection slab"))
+                    _ => Err(format!("Failed to insert into connection slab"))
                 }
             },
             Err(e) => Err(format!("Failed to create new socket, error:{:?}", e))
@@ -224,7 +224,7 @@ impl<'a> EngineInner<'a> {
                                                             map_err(|e| format!("event registration failed: {:?}", e)).
                                                             map(move |_| rx)
                             },
-                            Err(_) => Err(format!("failed to insert isizeo listener slab"))
+                            Err(_) => Err(format!("failed to insert into listener slab"))
                         }
                     },
                     Err(e) => {Err(format!("Failed to listen to socket {:?}:{:?}, error:{:?}", addr, port, e)) }
@@ -239,7 +239,7 @@ impl<'a> EngineInner<'a> {
 
 impl<'a> Handler<Token, StreamBuf> for EngineInner<'a> {
 
-    fn readable(&mut self, event_loop: &mut Reactor, token: Token, hisize: event::ReadHisize) {
+    fn readable(&mut self, event_loop: &mut Reactor, token: Token, hint: event::ReadHint) {
         debug!("mio_processor::readable top, token: {:?}", token);
         let mut close = false;
         if self.listeners.contains(token) {
@@ -253,7 +253,7 @@ impl<'a> Handler<Token, StreamBuf> for EngineInner<'a> {
                                                     tok, event::READABLE | event::HUP,
                                                     event::PollOpt::edge()).unwrap();
                                       debug!("readable accepted socket for token {:?}", tok); }
-                        Err(..)  => error!("Failed to insert isizeo Slab")
+                        Err(..)  => error!("Failed to insert into Slab")
                     }},
                 _ => error!("Failed to accept socket")
             }
@@ -286,12 +286,12 @@ impl<'a> Handler<Token, StreamBuf> for EngineInner<'a> {
                     Err(e) => error!("error writing to socket: {:?}", e)
                 };
 
-                if hisize.contains(event::HUPHINT) {
+                if hint.contains(event::HUPHINT) {
                     close = true;
                 }
                 else {
-                    c.isizeerest.insert(event::READABLE);
-                    event_loop.reregister(&c.sock, token, c.isizeerest, event::PollOpt::edge()).unwrap();
+                    c.interest.insert(event::READABLE);
+                    event_loop.reregister(&c.sock, token, c.interest, event::PollOpt::edge()).unwrap();
                 }
             }
         }
@@ -337,8 +337,8 @@ impl<'a> Handler<Token, StreamBuf> for EngineInner<'a> {
                              }
                          }
                          if c.outbuf.len() > 0 {
-                             c.isizeerest.insert(event::WRITABLE);
-                             event_loop.reregister(&c.sock, token, c.isizeerest, event::PollOpt::edge()).unwrap();
+                             c.interest.insert(event::WRITABLE);
+                             event_loop.reregister(&c.sock, token, c.interest, event::PollOpt::edge()).unwrap();
                          }
             },
         }
@@ -350,8 +350,8 @@ impl<'a> Handler<Token, StreamBuf> for EngineInner<'a> {
         let StreamBuf (buf, tok) = msg;
         match self.conns.get_mut(tok) {
             Some(c) => { c.outbuf.push_back(buf);
-                         c.isizeerest.insert(event::WRITABLE);
-                         event_loop.reregister(&c.sock, tok, c.isizeerest, event::PollOpt::edge()).unwrap();},
+                         c.interest.insert(event::WRITABLE);
+                         event_loop.reregister(&c.sock, tok, c.interest, event::PollOpt::edge()).unwrap();},
             None => {}
         }
     }

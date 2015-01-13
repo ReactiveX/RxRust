@@ -74,5 +74,5 @@ fn main() {
   let bar = Foo { x : 10 };
   
   let mut binding = MemberFn1::new(&bar, |f: &Foo, a: usize| { f.winning(a) } ); 
-  prisizeln!("result: {:?}", binding.call(10)); 
+  println!("result: {:?}", binding.call(10)); 
 }
