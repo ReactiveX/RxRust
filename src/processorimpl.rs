@@ -1,3 +1,7 @@
+// Copyright (C) 2015 <Rick Richardson r@12sidedtech.com>
+//
+// This software may be modified and distributed under the terms
+// of the MIT license.  See the LICENSE file for details.
 use std::fmt::Show;
 use reactive::{Publisher, Subscriber};
 use sendable::Sendable;
@@ -20,7 +24,7 @@ impl<'a, I> Trace<'a, I> where I : Show {
 
 impl<'a, I> Publisher<'a> for Trace<'a, I> where I : Show {
     type Output = I;
-    fn subscribe<S>(&mut self, s: Box<S>) where S : Subscriber<Input=I> + 'a {
+    fn subscribe(&mut self, s: Box<Subscriber<Input=I> + 'a>) {
         let t: Box<Subscriber<Input=I>+'a> = s;
         self.subscriber = Some(t);
         self.subscriber.as_mut().unwrap().on_subscribe(0);
@@ -62,7 +66,7 @@ impl<'a, I, F> TraceWhile<'a, I, F> where I : 'a + Show, F : Fn(&I) -> bool{
 
 impl<'a, I, F> Publisher<'a> for TraceWhile<'a, I, F> where I : Show, F : Fn(&I) -> bool  {
     type Output = I;
-    fn subscribe<S>(&mut self, s: Box<S>) where S : Subscriber<Input=I> + 'a {
+    fn subscribe(&mut self, s: Box<Subscriber<Input=I> + 'a>) {
         let s: Box<Subscriber<Input=I>+'a> = s;
         self.subscriber = Some(s);
         self.subscriber.as_mut().unwrap().on_subscribe(0);
@@ -110,7 +114,7 @@ impl<'a, I, F> Do<'a, I, F> where F : Fn(&I) -> () {
 
 impl<'a, I, F> Publisher<'a> for Do<'a, I, F> where F : Fn(&I) -> () {
     type Output = I;
-    fn subscribe<S>(&mut self, s: Box<S>) where S : Subscriber<Input=I> + 'a {
+    fn subscribe(&mut self, s: Box<Subscriber<Input=I> + 'a>) {
         let s: Box<Subscriber<Input=I>+'a> = s;
         self.subscriber = Some(s);
         self.subscriber.as_mut().unwrap().on_subscribe(0);
@@ -159,7 +163,7 @@ impl<'a, I, O, F> Map<'a, I, O, F> where F : Fn(I) -> O {
 
 impl<'a, I, O, F> Publisher<'a> for Map<'a, I, O, F> where F : Fn(I) -> O {
     type Output = O;
-    fn subscribe<S>(&mut self, s: Box<S>) where S : Subscriber<Input=O> + 'a {
+    fn subscribe(&mut self, s: Box<Subscriber<Input=O> + 'a>) {
         let s: Box<Subscriber<Input=O>+'a> = s;
         self.subscriber = Some(s);
         self.subscriber.as_mut().unwrap().on_subscribe(0);
@@ -206,7 +210,7 @@ impl<'a, 'c, I, V, O, F> MapVal1<'a, 'c, I, V, O, F> where O : 'c, V : Clone, F 
 impl<'a, 'c, I, V, O, F> Publisher<'a> for MapVal1<'a, 'c, I, V, O, F> where O : 'c, V : Clone, F : Fn(I,&V) -> O {
     type Output = O;
 
-    fn subscribe<S>(&mut self, s: Box<S>) where S : Subscriber<Input=O> + 'a {
+    fn subscribe(&mut self, s: Box<Subscriber<Input=O> + 'a>) {
         let s: Box<Subscriber<Input=O>+'a> = s;
         self.subscriber = Some(s);
         self.subscriber.as_mut().unwrap().on_subscribe(0);
@@ -258,7 +262,7 @@ impl<'a, 'c, I, V, O, F> Reduce<'a, 'c, I, V, O, F> where O : 'c, V : Copy, F : 
 impl<'a, 'c, I, V, O, F> Publisher<'a> for Reduce<'a, 'c, I, V, O, F> where O : 'c, V : Copy, F : Fn(V,I) -> (V, O) {
     type Output = O;
 
-    fn subscribe<S>(&mut self, s: Box<S>) where S : Subscriber<Input=O> + 'a {
+    fn subscribe(&mut self, s: Box<Subscriber<Input=O> + 'a>) {
         let s: Box<Subscriber<Input=O>+'a> = s;
         self.subscriber = Some(s);
         self.subscriber.as_mut().unwrap().on_subscribe(0);
@@ -309,7 +313,7 @@ impl<'a, I> Enumerate<'a, I> {
 impl<'a, I> Publisher<'a> for Enumerate<'a, I> {
     type Output = (I, u64);
 
-    fn subscribe<S>(&mut self, s: Box<S>) where S : Subscriber<Input=(I, u64)> + 'a {
+    fn subscribe(&mut self, s: Box<Subscriber<Input=(I, u64)> + 'a>) {
         let s: Box<Subscriber<Input=(I, u64)>+'a> = s;
         self.subscriber = Some(s);
         self.subscriber.as_mut().unwrap().on_subscribe(0);
@@ -367,7 +371,7 @@ Q : Sendable<Item=I> {
 
     type Output = I;
 
-    fn subscribe<S>(&mut self, s: Box<S>) where S : Subscriber<Input=I> + 'a {
+    fn subscribe(&mut self, s: Box<Subscriber<Input=I> + 'a>) {
         let s: Box<Subscriber<Input=I>+'a> = s;
         self.subscriber = Some(s);
         self.subscriber.as_mut().unwrap().on_subscribe(0);
@@ -417,7 +421,7 @@ impl<'a, I> Publisher<'a> for Unzip<'a, I>
 {
     type Output = I;
 
-    fn subscribe<S>(&mut self, s: Box<S>) where S : Subscriber<Input=I> + 'a {
+    fn subscribe(&mut self, s: Box<Subscriber<Input=I> + 'a>) {
         let s: Box<Subscriber<Input=I>+'a> = s;
         self.subscriber = Some(s);
         self.subscriber.as_mut().unwrap().on_subscribe(0);
@@ -469,7 +473,7 @@ impl<'a, O> Publisher<'a> for Take<'a, O>
 {
     type Output = O;
 
-    fn subscribe<S>(&mut self, s: Box<S>) where S : Subscriber<Input=O> + 'a {
+    fn subscribe(&mut self, s: Box<Subscriber<Input=O> + 'a>) {
         let s: Box<Subscriber<Input=O>+'a> = s;
         self.subscriber = Some(s);
         self.subscriber.as_mut().unwrap().on_subscribe(0);

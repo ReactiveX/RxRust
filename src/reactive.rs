@@ -1,3 +1,7 @@
+// Copyright (C) 2015 <Rick Richardson r@12sidedtech.com>
+//
+// This software may be modified and distributed under the terms
+// of the MIT license.  See the LICENSE file for details.
 use std::ops::{Shl, Shr};
 use std::cell::RefCell;
 
@@ -18,7 +22,8 @@ pub trait Subscriber {
 
 pub trait Publisher<'a> {
     type Output;
-    fn subscribe<S>(&mut self, Box<S>) where S : Subscriber<Input=Self::Output>;
+
+    fn subscribe(&mut self, Box<Subscriber<Input=Self::Output> + 'a>);
 
     fn next(&mut self) -> bool {
         panic!("Unimplemented fn, presumably run() or next() is being attempted on a processor, not a publisher");

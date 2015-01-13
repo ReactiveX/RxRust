@@ -1,3 +1,7 @@
+// Copyright (C) 2015 <Rick Richardson r@12sidedtech.com>
+//
+// This software may be modified and distributed under the terms
+// of the MIT license.  See the LICENSE file for details.
 //! A handler for both incoming and outgoing connections,
 //! all incoming connections' data is sent through a standard sync_channel
 //! which is returned from EngineInner::new
@@ -39,7 +43,7 @@ impl<'a> NetStream<'a>
 pub struct NetStreamer<'a>
 {
     stream: NetStream<'a>,
-    subscriber: Option<Box< Subscriber<Input=StreamBuf> + 'a>>
+    subscriber: Option<Box<Subscriber<Input=<NetStreamer<'a> as Publisher<'a>>::Output> + 'a >>
 }
 
 impl<'a> Subscriber for NetStreamer<'a>
@@ -60,9 +64,9 @@ impl<'a> Publisher<'a> for NetStreamer<'a>
 {
     type Output = StreamBuf;
 
-    fn subscribe<S>(&mut self, s: Box<S>) where S : Subscriber<Input=StreamBuf> + 'a {
-        let t: Box<Subscriber<Input=StreamBuf>+'a> = s;
-        self.subscriber = Some(t);
+    fn subscribe(&mut self, s: Box<Subscriber<Input=<Self as Publisher<'a>>::Output > + 'a>) {
+        //let t: Box<Subscriber<Input=<Self as Publisher<'a>>::Output> + 'a> = s;
+        self.subscriber = Some(s);
         self.subscriber.as_mut().unwrap().on_subscribe(0);
     }
 

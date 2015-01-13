@@ -1,3 +1,7 @@
+// Copyright (C) 2015 <Rick Richardson r@12sidedtech.com>
+//
+// This software may be modified and distributed under the terms
+// of the MIT license.  See the LICENSE file for details.
 //! # Reactive Rust
 //! A reactive streams library in the vein of [reactive-streams.org](http://reactive-streams.org)
 //! with inspiration taken from [Elm](http://elm-lang.org)

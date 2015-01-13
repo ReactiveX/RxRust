@@ -1,3 +1,8 @@
+// Copyright (C) 2015 <Rick Richardson r@12sidedtech.com>
+//
+// This software may be modified and distributed under the terms
+// of the MIT license.  See the LICENSE file for details.
+
 
 #[macro_export]
 macro_rules! default_pass_error(
