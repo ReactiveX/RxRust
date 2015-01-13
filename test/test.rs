@@ -2,7 +2,7 @@
 
 extern crate mio;
 extern crate iobuf;
-extern crate reactive;
+extern crate rx;
 extern crate alloc;
 extern crate time;
 
@@ -18,12 +18,12 @@ use mio::{EventLoop, EventLoopSender, Token};
 use alloc::heap as a;
 use std::sync::Arc;
 
-use reactive::reactive::{Publisher, Subscriber};
-use reactive::publisher::{IterPublisher, Coupler};
-use reactive::subscriber::{StdoutSubscriber, Decoupler};
-use reactive::processor::{MapVal1, Map, TraceWhile, Reduce};
-use reactive::sendable::{Sendable};
-use reactive::reactor::{StreamBuf, NetEngine, Reactor};
+use rx::reactive::{Publisher, Subscriber};
+use rx::publisher::{IterPublisher, Coupler};
+use rx::subscriber::{StdoutSubscriber, Decoupler};
+use rx::processor::{MapVal1, Map, TraceWhile, Reduce};
+use rx::sendable::{Sendable};
+use rx::reactor::{StreamBuf, NetEngine, Reactor};
 
 use std::mem;
 use std::str;

@@ -126,7 +126,6 @@ fn main() {
         map1.subscribe(map2);
         iter.subscribe(map1);
 
-        let f = iter.map(|&: i : isize| { i + 2});
     });
 
 
