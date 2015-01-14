@@ -43,7 +43,8 @@ impl<'a> NetStream<'a>
 pub struct NetStreamer<'a>
 {
     stream: NetStream<'a>,
-    subscriber: Option<Box<Subscriber<Input=<NetStreamer<'a> as Publisher<'a>>::Output> + 'a >>
+    subscriber: Option<Box<Subscriber<Input=StreamBuf> + 'a >>
+    //subscriber: Option<Box<Subscriber<Input=<NetStreamer<'a> as Publisher<'a>>::Output> + 'a >>
 }
 
 impl<'a> Subscriber for NetStreamer<'a>
@@ -64,7 +65,8 @@ impl<'a> Publisher<'a> for NetStreamer<'a>
 {
     type Output = StreamBuf;
 
-    fn subscribe(&mut self, s: Box<Subscriber<Input=<Self as Publisher<'a>>::Output > + 'a>) {
+    //fn subscribe(&mut self, s: Box<Subscriber<Input=<Self as Publisher<'a>>::Output > + 'a>) {
+    fn subscribe(&mut self, s: Box<Subscriber<Input=StreamBuf> + 'a>) {
         //let t: Box<Subscriber<Input=<Self as Publisher<'a>>::Output> + 'a> = s;
         self.subscriber = Some(s);
         self.subscriber.as_mut().unwrap().on_subscribe(0);
