@@ -259,7 +259,7 @@ impl<'a> Handler<Token, StreamBuf> for EngineInner<'a> {
                                       debug!("readable accepted socket for token {:?}", tok); }
                         Err(..)  => error!("Failed to insert into Slab")
                     }},
-                _ => error!("Failed to accept socket")
+                e => error!("Failed to accept socket: {:?}", e)
             }
             event_loop.reregister(list, token, event::READABLE, event::PollOpt::edge()).unwrap();
             return;
@@ -309,44 +309,44 @@ impl<'a> Handler<Token, StreamBuf> for EngineInner<'a> {
         debug!("mio_processor::writable, token: {:?}", token);
         match self.conns.get_mut(token) {
             None    => error!("{:?} not present in connections", token),
-            Some(c) => { let mut writable = true;
-                         let mut index : usize = 0;
-                         while writable && c.outbuf.len() > 0 {
-                             let (result, sz) =
-                             unsafe {
-                                 let buf = c.outbuf.front_mut().unwrap();
-                                 let sz = buf.len() - index as u32;
-                                 let b : &[u8] = &buf.as_window_slice()[index..];
-                                 (c.sock.write_slice(b), sz)
-                             };
-                             match result {
-                                 Ok(NonBlock::Ready(n)) =>
-                                    {
-                                        debug!("Wrote {:?} out of {:?} bytes to socket", n, sz);
-                                        if n == sz as usize {
-                                            c.outbuf.pop_front(); // we have written the contents of this buffer so lets get rid of it
-                                            index = 0;
-                                        }
-                                        else { // this is unlikely to happen, we didn't write all of the
-                                               // buffer to the socket, so lets try again
-                                               index += n;
-                                        }
-                                    },
-                                 Ok(NonBlock::WouldBlock) => { // this is also very unlikely, we got a writable message, but failed
-                                                                    // to write anything at all.
-                                                                    debug!("Got Writable event for socket, but failed to write any bytes");
-                                                                    writable = false;
-                                },
-                                Err(e)              => error!("error writing to socket: {:?}", e)
-                             }
-                         }
-                         if c.outbuf.len() > 0 {
-                             c.interest.insert(event::WRITABLE);
-                             event_loop.reregister(&c.sock, token, c.interest, event::PollOpt::edge()).unwrap();
-                         }
+            Some(c) => { 
+                let mut writable = true;
+                let mut index : usize = 0;
+                while writable && c.outbuf.len() > 0 {
+                    let (result, sz) =
+                        unsafe {
+                            let buf = c.outbuf.front_mut().unwrap();
+                            let sz = buf.len() - index as u32;
+                            let b : &[u8] = &buf.as_window_slice()[index..];
+                            (c.sock.write_slice(b), sz)
+                        };
+                    match result {
+                        Ok(NonBlock::Ready(n)) =>
+                        {
+                            debug!("Wrote {:?} out of {:?} bytes to socket", n, sz);
+                            if n == sz as usize {
+                                c.outbuf.pop_front(); // we have written the contents of this buffer so lets get rid of it
+                                index = 0;
+                            }
+                            else { // this is unlikely to happen, we didn't write all of the
+                                // buffer to the socket, so lets try again
+                                index += n;
+                            }
+                        },
+                        Ok(NonBlock::WouldBlock) => { // this is also very unlikely, we got a writable message, but failed
+                            // to write anything at all.
+                            debug!("Got Writable event for socket, but failed to write any bytes");
+                            writable = false;
+                        },
+                        Err(e)              => error!("error writing to socket: {:?}", e)
+                    }
+                }
+                if c.outbuf.len() > 0 {
+                    c.interest.insert(event::WRITABLE);
+                    event_loop.reregister(&c.sock, token, c.interest, event::PollOpt::edge()).unwrap();
+                }
             },
         }
-
     }
 
     fn notify(&mut self, event_loop: &mut Reactor, msg: StreamBuf) {
