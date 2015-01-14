@@ -287,7 +287,7 @@ impl<'a> Handler<Token, StreamBuf> for EngineInner<'a> {
                     Ok(NonBlock::WouldBlock) => {
                         debug!("Got Readable event for socket, but failed to write any bytes");
                     },
-                    Err(e) => error!("error writing to socket: {:?}", e)
+                    Err(e) => error!("error reading from socket: {:?}", e)
                 };
 
                 if hint.contains(event::HUPHINT) {
