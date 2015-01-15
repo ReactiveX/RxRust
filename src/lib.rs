@@ -66,6 +66,7 @@ pub mod reactor;
 pub mod net_stream;
 pub mod sendable;
 pub mod mmap_allocator;
+pub mod scheduler;
 mod processorimpl;
 mod publisherimpl;
 mod processorext;

@@ -162,8 +162,8 @@ impl<'a> EngineInner<'a> {
     pub fn new(buf_sz: usize, max_conns: usize, max_queue_sz: usize) -> EngineInner<'a> {
         EngineInner {
             listeners: Slab::new_starting_at(Token(0), 128),
-            timeouts: Slab::new_starting_at(Token(0), 128),
-            conns: Slab::new_starting_at(Token(2), max_conns),
+            timeouts: Slab::new_starting_at(Token(129), 255),
+            conns: Slab::new_starting_at(Token(256), max_conns + 256),
             buf_sz: buf_sz,
             queue_sz: max_queue_sz,
             alloc: None
@@ -248,60 +248,62 @@ impl<'a> Handler<Token, StreamBuf> for EngineInner<'a> {
         let mut close = false;
         if self.listeners.contains(token) {
             let (ref mut list, ref tx) = *self.listeners.get_mut(token).unwrap();
-            match list.accept() {
-                Ok(NonBlock::Ready(sock)) => {
-                    //s.set_tcp_nodelay(true); TODO: re-add to mio
-                    match self.conns.insert(Connection::new(sock, tx.clone())) {
-                        Ok(tok) =>  {
-                            event_loop.register_opt(&self.conns.get(tok).unwrap().sock,
-                                                    tok, event::READABLE | event::HUP,
-                                                    event::PollOpt::edge()).unwrap();
-                                      debug!("readable accepted socket for token {:?}", tok); }
-                        Err(..)  => error!("Failed to insert into Slab")
-                    }},
-                e => error!("Failed to accept socket: {:?}", e)
-            }
+                match list.accept() {
+                    Ok(NonBlock::Ready(sock)) => {
+                        //s.set_tcp_nodelay(true); TODO: re-add to mio
+                        match self.conns.insert(Connection::new(sock, tx.clone())) {
+                            Ok(tok) =>  {
+                                event_loop.register_opt(&self.conns.get(tok).unwrap().sock,
+                                                        tok, event::READABLE | event::HUP,
+                                                        event::PollOpt::edge()).unwrap();
+                                          debug!("readable accepted socket for token {:?}", tok); }
+                            Err(..)  => error!("Failed to insert into Slab")
+                        }; },
+                    e => { error!("Failed to accept socket: {:?}", e);}
+                }
             event_loop.reregister(list, token, event::READABLE, event::PollOpt::edge()).unwrap();
             return;
-        }
 
-        match self.conns.get_mut(token) {
-            None    => error!("Got a readable event for token {:?},
-                               but it is not present in MioHandler connections", token),
-            Some(c) => {
+        } else {
 
-                let mut b =
-                    if let Some(alloc) = self.alloc.as_ref() {
-                        RWIobuf::new_with_allocator(self.buf_sz, alloc.clone())
-                    } else {
-                        RWIobuf::new(self.buf_sz)
+            match self.conns.get_mut(token) {
+                None    => error!("Got a readable event for token {:?},
+                                   but it is not present in MioHandler connections", token),
+                Some(c) => {
+
+                    let mut b =
+                        if let Some(alloc) = self.alloc.as_ref() {
+                            RWIobuf::new_with_allocator(self.buf_sz, alloc.clone())
+                        } else {
+                            RWIobuf::new(self.buf_sz)
+                        };
+
+                    let result = unsafe { c.sock.read_slice(b.as_mut_window_slice()) };
+                    match result {
+                        Ok(NonBlock::Ready(n)) => {debug!("read {:?} bytes", n);
+                                  b.advance(n as u32).unwrap();
+                                  b.flip_lo();
+                                  let abuf = b.atomic_read_only().unwrap();
+                                  c.conn_tx.send( StreamBuf (abuf, token) ).unwrap(); },
+                        Ok(NonBlock::WouldBlock) => {
+                            debug!("Got Readable event for socket, but failed to write any bytes");
+                        },
+                        Err(e) => error!("error reading from socket: {:?}", e)
                     };
 
-                let result = unsafe { c.sock.read_slice(b.as_mut_window_slice()) };
-                match result {
-                    Ok(NonBlock::Ready(n)) => {debug!("read {:?} bytes", n);
-                              b.advance(n as u32).unwrap();
-                              b.flip_lo();
-                              let abuf = b.atomic_read_only().unwrap();
-                              c.conn_tx.send( StreamBuf (abuf, token) ).unwrap(); },
-                    Ok(NonBlock::WouldBlock) => {
-                        debug!("Got Readable event for socket, but failed to write any bytes");
-                    },
-                    Err(e) => error!("error reading from socket: {:?}", e)
-                };
-
-                if hint.contains(event::HUPHINT) {
-                    close = true;
-                }
-                else {
-                    c.interest.insert(event::READABLE);
-                    event_loop.reregister(&c.sock, token, c.interest, event::PollOpt::edge()).unwrap();
+                    if hint.contains(event::HUPHINT) {
+                        close = true;
+                    }
+                    else {
+                        c.interest.insert(event::READABLE);
+                        event_loop.reregister(&c.sock, token, c.interest, event::PollOpt::edge()).unwrap();
+                    }
                 }
             }
-        }
 
-        if close {
-            self.conns.remove(token);
+            if close {
+                self.conns.remove(token);
+            }
         }
     }
 
@@ -338,7 +340,7 @@ impl<'a> Handler<Token, StreamBuf> for EngineInner<'a> {
                             debug!("Got Writable event for socket, but failed to write any bytes");
                             writable = false;
                         },
-                        Err(e)              => error!("error writing to socket: {:?}", e)
+                        Err(e)              => { error!("error writing to socket: {:?}", e); writable = false }
                     }
                 }
                 if c.outbuf.len() > 0 {
@@ -350,7 +352,6 @@ impl<'a> Handler<Token, StreamBuf> for EngineInner<'a> {
     }
 
     fn notify(&mut self, event_loop: &mut Reactor, msg: StreamBuf) {
-        debug!("mio_processor::notify top");
         let StreamBuf (buf, tok) = msg;
         match self.conns.get_mut(tok) {
             Some(c) => { c.outbuf.push_back(buf);

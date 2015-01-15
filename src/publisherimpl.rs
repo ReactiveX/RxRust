@@ -7,7 +7,7 @@ use reactive::{Publisher, Subscriber};
 
 use quickcheck::{Arbitrary, Gen, StdGen};
 
-use std::sync::mpsc::{Sender, Receiver};
+use std::sync::mpsc::{Sender, Receiver, TryRecvError};
 use std::rand::Rng;
 
 use rand::isaac::Isaac64Rng as IRng;
@@ -54,7 +54,7 @@ impl<'a,'b, O> Publisher<'a> for RndGen<'a, 'b, O> where  O : Arbitrary {
         self.subscriber.as_mut().unwrap().on_subscribe(0);
     }
 
-    fn next(&mut self) -> bool {
+    fn try_next(&mut self) -> bool {
         match self.subscriber.as_mut() {
             Some(s) => s.on_next(Arbitrary::arbitrary(&mut self.gen)),
             None => {error!("My subscriber went away");false}
@@ -154,8 +154,18 @@ impl<'a, O> Publisher<'a> for Coupler<'a, O> where O : Send {
         }
     }
 
-    // Blocks
-
+    fn try_next(&mut self) -> bool {
+        match self.subscriber.as_mut() {
+            Some(s) => match self.data_rx.try_recv() {
+                Ok(d) => s.on_next(d),
+                Err(TryRecvError::Empty) => true,
+                Err(TryRecvError::Disconnected) => { 
+                    info!("The other end of the coupler queue went away"); s.on_complete(false); false 
+                }
+            },
+            None => { error!("My subscriber went away"); false }
+        }
+    }
 }
 
 //
