@@ -18,7 +18,7 @@ pub fn fixed_loop<F>(rate: u64, mut f: F) where F : FnMut() -> bool {
 
     loop {
         let start = precise_time_ns() as i64;
-        if ! f() {
+        if !f() {
             break;
         }
         let span = Duration::nanoseconds(precise_time_ns() as i64 - start);

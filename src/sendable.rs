@@ -36,7 +36,10 @@ impl<A : Send> Sendable for SyncSender<A> {
 impl<A : Send + Clone> Sendable for EventLoopSender<A> {
     type Item = A;
     fn send(&self, a: <Self as Sendable>::Item) -> Result<(), <Self as Sendable>::Item> {
-        self.send(a)
+        match self.send(a) {
+            Ok(_) => Ok(()),
+            Err(e)  => Err(e.0)
+        }
     }
 }
 

@@ -143,7 +143,6 @@ impl<'a, O> Publisher<'a> for Coupler<'a, O> where O : Send {
         self.subscriber.as_mut().unwrap().on_subscribe(0);
     }
 
-    // Does not block
     fn next (&mut self) -> bool {
         match self.subscriber.as_mut() {
             Some(s) => match self.data_rx.recv() {
@@ -154,6 +153,7 @@ impl<'a, O> Publisher<'a> for Coupler<'a, O> where O : Send {
         }
     }
 
+    // Does not block
     fn try_next(&mut self) -> bool {
         match self.subscriber.as_mut() {
             Some(s) => match self.data_rx.try_recv() {

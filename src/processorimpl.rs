@@ -279,10 +279,10 @@ impl<'a, 'c, I, V, O, F> Subscriber for Reduce<'a, 'c, I, V, O, F> where O : 'c,
     default_pass_error!();
 
     fn on_next(&mut self, t: I) -> bool {
+        let (newstate, outval) = (self.fun)(self.state, t);
+        self.state = newstate;
         match self.subscriber.as_mut() {
-            Some(s) =>  { let (newstate, outval) = (self.fun)(self.state, t);
-                          self.state = newstate;
-                          s.on_next(outval) }
+            Some(s) =>  { s.on_next(outval) }
             None => {true}
         }
     }
@@ -457,7 +457,8 @@ pub struct Take<'a, O>
     subscriber: Option<Box<Subscriber<Input=O> + 'a>>,
     index: Option<usize>,
     count: usize,
-    max: usize
+    max: usize,
+    notified: bool
 }
 
 impl<'a, O> Take<'a, O> {
@@ -466,7 +467,8 @@ impl<'a, O> Take<'a, O> {
             index: None,
             subscriber: None,
             count: 0,
-            max: max
+            max: max,
+            notified: false
         }
     }
 }
@@ -493,7 +495,7 @@ impl<'a, O> Subscriber for Take<'a, O>
         match self.subscriber.as_mut() {
             Some(s) =>  {
                 self.count += 1;
-                if self.count > self.max { false }
+                if self.count > self.max { s.on_complete(false); self.notified = true; false }
                 else { s.on_next(t) }
             },
             None => {true}

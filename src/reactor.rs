@@ -250,7 +250,6 @@ impl<'a> Handler<Token, StreamBuf> for EngineInner<'a> {
             let (ref mut list, ref tx) = *self.listeners.get_mut(token).unwrap();
                 match list.accept() {
                     Ok(NonBlock::Ready(sock)) => {
-                        //s.set_tcp_nodelay(true); TODO: re-add to mio
                         match self.conns.insert(Connection::new(sock, tx.clone())) {
                             Ok(tok) =>  {
                                 event_loop.register_opt(&self.conns.get(tok).unwrap().sock,
