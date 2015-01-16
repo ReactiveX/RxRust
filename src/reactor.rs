@@ -13,6 +13,7 @@ use mio::{
     IoWriter,
     IoReader,
     IoAcceptor,
+    Buf,
     Timeout};
 
 pub use mio::Token;
@@ -55,9 +56,23 @@ pub type Reactor = EventLoop<Token, StreamBuf>;
 
 pub type Sender = EventLoopSender<StreamBuf>;
 
+impl Buf for StreamBuf {
+    fn remaining(&self) -> usize {
+        self.0.len() as usize
+    }
+
+    fn bytes<'a>(&'a self) -> &'a [u8] { unsafe {
+        self.0.as_window_slice()
+    } }
+
+    fn advance(&mut self, cnt: usize) {
+        self.0.advance(cnt as u32).unwrap();
+    }
+}
+
 struct Connection {
         sock: TcpSocket,
-        outbuf: DList<AROIobuf>,
+        outbuf: DList<StreamBuf>,
         interest: event::Interest,
         conn_tx: SyncSender<StreamBuf>
 }
@@ -238,6 +253,35 @@ impl<'a> EngineInner<'a> {
             Err(e) => Err(format!("Failed to create TCP socket, error:{:?}", e))
         }
     }
+    
+    fn drain_write_queue_to_socket(&mut self, c: &mut Connection) -> usize {
+        let mut writable = true;
+        while writable && c.outbuf.len() > 0 {
+            if let Some(sbuf) = c.outbuf.front().as_mut() {
+                let buf = sbuf as &Buf;
+                let sz = buf.remaining();
+                match c.sock.write(buf) {
+                    Ok(NonBlock::Ready(n)) =>
+                    {
+                        debug!("Wrote {:?} out of {:?} bytes to socket", n, sz);
+                        if buf.remaining() == 0 {
+                            c.outbuf.pop_front(); // we have written the contents of this buffer so lets get rid of it
+                        }
+                        else { 
+                            // We didn't write all of the  buffer to the socket, so lets try again
+                        }
+                    },
+                    Ok(NonBlock::WouldBlock) => { // this is also very unlikely, we got a writable message, but failed
+                        // to write anything at all.
+                        debug!("Got Writable event for socket, but failed to write any bytes");
+                        writable = false;
+                    },
+                    Err(e) => { error!("error writing to socket: {:?}", e); writable = false }
+                }
+            }
+        }
+        c.outbuf.len()
+    }
 
 }
 
@@ -308,54 +352,23 @@ impl<'a> Handler<Token, StreamBuf> for EngineInner<'a> {
 
     fn writable(&mut self, event_loop: &mut Reactor, token: Token) {
         debug!("mio_processor::writable, token: {:?}", token);
-        match self.conns.get_mut(token) {
-            None    => error!("{:?} not present in connections", token),
-            Some(c) => { 
-                let mut writable = true;
-                let mut index : usize = 0;
-                while writable && c.outbuf.len() > 0 {
-                    let (result, sz) =
-                        unsafe {
-                            let buf = c.outbuf.front_mut().unwrap();
-                            let sz = buf.len() - index as u32;
-                            let b : &[u8] = &buf.as_window_slice()[index..];
-                            (c.sock.write_slice(b), sz)
-                        };
-                    match result {
-                        Ok(NonBlock::Ready(n)) =>
-                        {
-                            debug!("Wrote {:?} out of {:?} bytes to socket", n, sz);
-                            if n == sz as usize {
-                                c.outbuf.pop_front(); // we have written the contents of this buffer so lets get rid of it
-                                index = 0;
-                            }
-                            else { // this is unlikely to happen, we didn't write all of the
-                                // buffer to the socket, so lets try again
-                                index += n;
-                            }
-                        },
-                        Ok(NonBlock::WouldBlock) => { // this is also very unlikely, we got a writable message, but failed
-                            // to write anything at all.
-                            debug!("Got Writable event for socket, but failed to write any bytes");
-                            writable = false;
-                        },
-                        Err(e)              => { error!("error writing to socket: {:?}", e); writable = false }
-                    }
-                }
-                if c.outbuf.len() > 0 {
+        if let Some(c) = self.conns.get_mut(token) {
+            if self.drain_write_queue_to_socket(c) > 0 {
                     c.interest.insert(event::WRITABLE);
                     event_loop.reregister(&c.sock, token, c.interest, event::PollOpt::edge()).unwrap();
-                }
-            },
+            }
         }
     }
+
 
     fn notify(&mut self, event_loop: &mut Reactor, msg: StreamBuf) {
         let StreamBuf (buf, tok) = msg;
         match self.conns.get_mut(tok) {
-            Some(c) => { c.outbuf.push_back(buf);
-                         c.interest.insert(event::WRITABLE);
-                         event_loop.reregister(&c.sock, tok, c.interest, event::PollOpt::edge()).unwrap();},
+            Some(c) => {
+                c.outbuf.push_back(msg);
+                c.interest.insert(event::WRITABLE);
+                event_loop.reregister(&c.sock, tok, c.interest, event::PollOpt::edge()).unwrap();
+            },
             None => {}
         }
     }
