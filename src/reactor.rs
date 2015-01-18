@@ -8,6 +8,7 @@ use net_stream::NetStream;
 use mio::{
     EventLoop,
     EventLoopSender,
+    EventLoopConfig,
     Handler,
     NonBlock,
     IoWriter,
@@ -86,6 +87,35 @@ impl Connection {
             conn_tx: tx
         }
     }
+
+    fn drain_write_queue_to_socket(&mut self) -> usize {
+        let mut writable = true;
+        while writable && self.outbuf.len() > 0 {
+            let (result, sz) = {
+                let buf = self.outbuf.front_mut().unwrap(); //shouldn't panic because of len() check
+                let sz = buf.0.len();
+                (self.sock.write(buf), sz as usize)
+            };
+            match result {
+                Ok(NonBlock::Ready(n)) =>
+                {
+                    debug!("Wrote {:?} out of {:?} bytes to socket", n, sz);
+                    if n == sz {
+                        self.outbuf.pop_front(); // we have written the contents of this buffer so lets get rid of it
+                    }
+                },
+                Ok(NonBlock::WouldBlock) => { // this is also very unlikely, we got a writable message, but failed
+                    // to write anything at all.
+                    debug!("Got Writable event for socket, but failed to write any bytes");
+                    writable = false;
+                },
+                Err(e) => { error!("error writing to socket: {:?}", e); writable = false }
+            }
+        }
+        self.outbuf.len()
+    }
+
+
 }
 
 pub struct NetEngine<'a> {
@@ -93,14 +123,16 @@ pub struct NetEngine<'a> {
     event_loop: Reactor
 }
 
+
 impl<'a> NetEngine<'a> {
     /// * buf_sz: the size of the buffer that will be used to read from and send to sockets
     ///         this should be set to the size of your MTU, likely 1500 bytes
     /// * max_conns: Size for a pre-allocated array of containers for Connection objects
     /// * max_queue_sz: Size of the default sync channel through which buffers are sent
     pub fn new(buf_sz: usize, max_conns: usize, max_queue_sz: usize) -> NetEngine<'a> {
+
         NetEngine { inner: EngineInner::new(buf_sz, max_conns, max_queue_sz),
-                    event_loop: EventLoop::new().unwrap() }
+                    event_loop: EventLoop::configured(NetEngine::event_loop_config()).unwrap() }
     }
 
     /// * buf_sz: the size of the buffer that will be used to read from and send to sockets
@@ -113,8 +145,19 @@ impl<'a> NetEngine<'a> {
                max_queue_sz: usize,
                a: Arc<Box<Allocator>>) -> NetEngine<'a> {
         NetEngine { inner: EngineInner::new_with_alloc(buf_sz, max_conns, max_queue_sz, a),
-                    event_loop: EventLoop::new().unwrap() }
+                    event_loop: EventLoop::configured(NetEngine::event_loop_config()).unwrap() }
      }
+
+    fn event_loop_config() -> EventLoopConfig {
+        EventLoopConfig {
+            io_poll_timeout_ms: 200,
+            notify_capacity: 1_048_576,
+            messages_per_tick: 512,
+            timer_tick_ms: 100,
+            timer_wheel_size: 1_024,
+            timer_capacity: 65_536,
+        }
+    }
 
     /// connect to the supplied hostname and port
     /// any data that arrives on the connection will be put into a Buf
@@ -253,35 +296,7 @@ impl<'a> EngineInner<'a> {
             Err(e) => Err(format!("Failed to create TCP socket, error:{:?}", e))
         }
     }
-    
-    fn drain_write_queue_to_socket(&mut self, c: &mut Connection) -> usize {
-        let mut writable = true;
-        while writable && c.outbuf.len() > 0 {
-            if let Some(sbuf) = c.outbuf.front().as_mut() {
-                let buf = sbuf as &Buf;
-                let sz = buf.remaining();
-                match c.sock.write(buf) {
-                    Ok(NonBlock::Ready(n)) =>
-                    {
-                        debug!("Wrote {:?} out of {:?} bytes to socket", n, sz);
-                        if buf.remaining() == 0 {
-                            c.outbuf.pop_front(); // we have written the contents of this buffer so lets get rid of it
-                        }
-                        else { 
-                            // We didn't write all of the  buffer to the socket, so lets try again
-                        }
-                    },
-                    Ok(NonBlock::WouldBlock) => { // this is also very unlikely, we got a writable message, but failed
-                        // to write anything at all.
-                        debug!("Got Writable event for socket, but failed to write any bytes");
-                        writable = false;
-                    },
-                    Err(e) => { error!("error writing to socket: {:?}", e); writable = false }
-                }
-            }
-        }
-        c.outbuf.len()
-    }
+
 
 }
 
@@ -353,7 +368,7 @@ impl<'a> Handler<Token, StreamBuf> for EngineInner<'a> {
     fn writable(&mut self, event_loop: &mut Reactor, token: Token) {
         debug!("mio_processor::writable, token: {:?}", token);
         if let Some(c) = self.conns.get_mut(token) {
-            if self.drain_write_queue_to_socket(c) > 0 {
+            if c.drain_write_queue_to_socket() > 0 {
                     c.interest.insert(event::WRITABLE);
                     event_loop.reregister(&c.sock, token, c.interest, event::PollOpt::edge()).unwrap();
             }
@@ -362,12 +377,14 @@ impl<'a> Handler<Token, StreamBuf> for EngineInner<'a> {
 
 
     fn notify(&mut self, event_loop: &mut Reactor, msg: StreamBuf) {
-        let StreamBuf (buf, tok) = msg;
+        let tok = msg.1;
         match self.conns.get_mut(tok) {
             Some(c) => {
                 c.outbuf.push_back(msg);
-                c.interest.insert(event::WRITABLE);
-                event_loop.reregister(&c.sock, tok, c.interest, event::PollOpt::edge()).unwrap();
+                if c.drain_write_queue_to_socket() > 0 {
+                    c.interest.insert(event::WRITABLE);
+                    event_loop.reregister(&c.sock, tok, c.interest, event::PollOpt::edge()).unwrap();
+                }
             },
             None => {}
         }
