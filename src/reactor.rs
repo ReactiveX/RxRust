@@ -36,29 +36,23 @@ use std::time::Duration;
 use collections::dlist::DList;
 
 use reactive::Subscriber;
+use protocol::Protocol;
+
 /// The basic sendable buffer which also contains
 /// its own addressing. When the buffer is received,
 /// Token reflects the socket whence it came,
 /// when it is sent, Token is the socket out of which
 /// the buffer should be sent
 #[derive(Show)]
-pub struct StreamBuf (pub AROIobuf, pub Token, pub Control);
+pub struct StreamBuf (pub AROIobuf, pub Token);
 
 unsafe impl Send for StreamBuf {}
 
 impl Clone for StreamBuf {
     fn clone(&self) -> StreamBuf {
-        StreamBuf (self.0.clone(), self.1, self.2)
+        StreamBuf (self.0.clone(), self.1)
     }
 }
-
-#[derive(Show, Copy)]
-enum Control {
-    Hangup,
-    New,
-    Append(usize)
-}
-
 
 struct ReadBuf (AppendBuf<'static>);
 
@@ -103,22 +97,30 @@ impl MutBuf for ReadBuf {
 }
 
 
-struct Connection {
+struct Connection<T, U>
+where T : Protocol<Output=U>
+{
         sock: TcpSocket,
         outbuf: DList<StreamBuf>,
         interest: event::Interest,
         conn_tx: SyncSender<StreamBuf>,
+        marker: usize,
+        proto: T,
         buf: ReadBuf
 }
 
-impl Connection {
-    pub fn new(s: TcpSocket, tx: SyncSender<StreamBuf>) -> Connection {
+impl<T, U> Connection<T, U>
+where T: Protocol<Output=U>
+{
+    pub fn new(s: TcpSocket, tx: SyncSender<StreamBuf>, rbuf: ReadBuf) -> Connection<T, U> {
         Connection {
             sock: s,
             outbuf: DList::new(),
             interest: event::HUP,
             conn_tx: tx,
-            buf: ReadBuf(AppendBuf::empty())
+            marker: 0,
+            proto: <T as Protocol>::new(),
+            buf:  rbuf
         }
     }
 
@@ -168,17 +170,19 @@ pub struct NetEngineConfig {
     allocator: Option<Arc<Box<Allocator>>>
 }
 
-pub struct NetEngine<'a> {
-    inner: EngineInner<'a>,
+pub struct NetEngine<'a, T, U> where T: Protocol<Output=U> {
+    inner: EngineInner<'a, T, U>,
     event_loop: Reactor
 }
 
 
-impl<'a> NetEngine<'a> {
+impl<'a, T, U> NetEngine<'a, T, U>
+where T: Protocol<Output=U>
+{
 
     /// Construct a new NetEngine with (hopefully) intelligent defaults
     ///
-    pub fn new() -> NetEngine<'a> {
+    pub fn new() -> NetEngine<'a, T, U> {
         let config = NetEngineConfig {
             queue_size: 524288,
             read_buf_sz: 1536,
@@ -192,7 +196,7 @@ impl<'a> NetEngine<'a> {
     }
 
     /// Construct a new engine with defaults specified by the user
-    pub fn configured(cfg: NetEngineConfig) -> NetEngine<'a> {
+    pub fn configured(cfg: NetEngineConfig) -> NetEngine<'a, T, U> {
         NetEngine { event_loop: EventLoop::configured(
                        NetEngine::event_loop_config(cfg.queue_size, cfg.poll_timeout_ms)).unwrap(),
                     inner: EngineInner::new(cfg)
@@ -262,16 +266,20 @@ impl<'a> NetEngine<'a> {
 }
 
 
-struct EngineInner<'a> {
+struct EngineInner<'a, T, U>
+where T: Protocol<Output=U>
+{
     listeners: Slab<(TcpAcceptor, SyncSender<StreamBuf>)>,
     timeouts: Slab<(Box<TimerCB<'a>>, Option<Timeout>)>,
-    conns: Slab<Connection>,
+    conns: Slab<Connection<T, U>>,
     config: NetEngineConfig,
 }
 
-impl<'a> EngineInner<'a> {
+impl<'a, T, U> EngineInner<'a, T, U>
+where T: Protocol<Output=U>
+{
 
-    pub fn new(cfg: NetEngineConfig) -> EngineInner<'a> {
+    pub fn new(cfg: NetEngineConfig) -> EngineInner<'a, T, U> {
 
         EngineInner {
             listeners: Slab::new_starting_at(Token(0), 128),
@@ -291,7 +299,7 @@ impl<'a> EngineInner<'a> {
             Ok(s) => {
                 //s.set_tcp_nodelay(true); TODO: re-add to mio
                 let (tx, rx) = sync_channel(self.config.queue_size);
-                match self.conns.insert(Connection::new(s, tx)) {
+                match self.conns.insert(Connection::new(s, tx, self.new_buf())) {
                     Ok(tok) => match event_loop.register_opt(&self.conns.get(tok).unwrap().sock, tok, event::READABLE, event::PollOpt::edge()) {
                         Ok(..) => match self.conns.get(tok).unwrap().sock.connect(&SockAddr::InetAddr(ip, port as u16)) {
                             Ok(..) => {
@@ -342,10 +350,19 @@ impl<'a> EngineInner<'a> {
         }
     }
 
+    fn new_buf(&self) -> ReadBuf {
+        if let Some(alloc) = self.config.allocator.as_ref() {
+            ReadBuf(AppendBuf::new_with_allocator(self.config.read_buf_sz, alloc.clone()))
+        } else {
+            ReadBuf(AppendBuf::new(self.config.read_buf_sz))
+        }
+    }
 
 }
 
-impl<'a> Handler<Token, StreamBuf> for EngineInner<'a> {
+impl<'a, T, U> Handler<Token, StreamBuf> for EngineInner<'a, T, U>
+where T: Protocol<Output=U>
+{
 
     fn readable(&mut self, event_loop: &mut Reactor, token: Token, hint: event::ReadHint) {
         debug!("mio_processor::readable top, token: {:?}", token);
@@ -354,7 +371,7 @@ impl<'a> Handler<Token, StreamBuf> for EngineInner<'a> {
             let (ref mut list, ref tx) = *self.listeners.get_mut(token).unwrap();
                 match list.accept() {
                     Ok(NonBlock::Ready(sock)) => {
-                        match self.conns.insert(Connection::new(sock, tx.clone())) {
+                        match self.conns.insert(Connection::new(sock, tx.clone(), self.new_buf())) {
                             Ok(tok) =>  {
                                 event_loop.register_opt(&self.conns.get(tok).unwrap().sock,
                                                         tok, event::READABLE | event::HUP,
@@ -374,22 +391,28 @@ impl<'a> Handler<Token, StreamBuf> for EngineInner<'a> {
                                    but it is not present in MioHandler connections", token),
                 Some(c) => {
 
-                    let mut newbuf = false;
-                    if c.buf.0.len() < self.config.min_read_buf_sz as u32 {
-                        newbuf = true;
-                        c.buf =
-                            if let Some(alloc) = self.config.allocator.as_ref() {
-                                ReadBuf(AppendBuf::new_with_allocator(self.config.read_buf_sz, alloc.clone()))
-                            } else {
-                                ReadBuf(AppendBuf::new(self.config.read_buf_sz))
-                            };
-                    }
-
                     match c.read() {
-                        Ok(NonBlock::Ready(n)) => {debug!("read {:?} bytes", n);
-                                  let abuf = c.buf.0.atomic_slice_from_end(n as u32).unwrap();
-                                  let ctl = if newbuf { Control::New } else { Control::Append(n) };
-                                  c.conn_tx.send( StreamBuf (abuf, token, ctl) ).unwrap(); },
+                        Ok(NonBlock::Ready(n)) => {
+                            debug!("read {:?} bytes", n);
+                            let abuf = c.buf.0.atomic_slice_pos_from_begin(n as u32, -1).unwrap();
+                            match c.proto.append(&abuf) {
+                                None => {},
+                                Some((item, consumed)) => {
+                                    c.marker += consumed;
+                                    c.conn_tx.send( (item, token));
+                                    if c.buf.0.len() < self.config.min_read_buf_sz {
+                                        let newbuf = self.new_buf();
+                                        if consumed < n {
+                                            // we didn't eat all of the bytes we just read
+                                            // so we must move them to the new buffer
+                                            newbuf.fill(c.buf.slice_from_end((n - consumed) as u32));
+                                        }
+                                        c.buf = newbuf;
+                                        c.marker = 0;
+                                    }
+                                }
+                            };
+                        }
                         Ok(NonBlock::WouldBlock) => {
                             debug!("Got Readable event for socket, but failed to write any bytes");
                         },
@@ -397,7 +420,6 @@ impl<'a> Handler<Token, StreamBuf> for EngineInner<'a> {
                     };
 
                     if hint.contains(event::HUPHINT) {
-                        c.conn_tx.send( StreamBuf (RWIobuf::empty().atomic_read_only().unwrap(), token, Control::Hangup));
                         close = true;
                     }
                     else {
