@@ -50,11 +50,11 @@ pub struct NetStreamer<'a>
 impl<'a> Subscriber for NetStreamer<'a>
 {
     type Input = StreamBuf;
-    fn on_next(&mut self, StreamBuf (buf, _) : StreamBuf) -> bool {
+    fn on_next(&mut self, StreamBuf (buf, _, ctl) : StreamBuf) -> bool {
 
         //TODO better handle queue failure, maybe put the returned buf
         //isizeo a recovery queue
-        match self.stream.dtx.send(StreamBuf(buf, self.stream.tok)) {
+        match self.stream.dtx.send(StreamBuf(buf, self.stream.tok, ctl)) {
             Ok(()) => true,
             Err(_) => false
         }

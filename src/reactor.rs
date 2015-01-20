@@ -14,8 +14,9 @@ use mio::{
     IoWriter,
     IoReader,
     IoAcceptor,
-    Buf,
-    Timeout};
+    Buf, MutBuf,
+    Timeout,
+    MioResult};
 
 pub use mio::Token;
 use mio::net::{SockAddr, Socket};
@@ -23,7 +24,7 @@ use mio::net::tcp::{TcpAcceptor, TcpSocket};
 use mio::util::Slab;
 use mio::event;
 
-use iobuf::{Iobuf, RWIobuf, AROIobuf, Allocator};
+use iobuf::{Iobuf, RWIobuf, AROIobuf, Allocator, AppendBuf};
 
 use std::io::net::addrinfo::get_host_addresses;
 use std::result::Result;
@@ -41,15 +42,25 @@ use reactive::Subscriber;
 /// when it is sent, Token is the socket out of which
 /// the buffer should be sent
 #[derive(Show)]
-pub struct StreamBuf (pub AROIobuf, pub Token);
+pub struct StreamBuf (pub AROIobuf, pub Token, pub Control);
 
 unsafe impl Send for StreamBuf {}
 
 impl Clone for StreamBuf {
     fn clone(&self) -> StreamBuf {
-        StreamBuf (self.0.clone(), self.1)
+        StreamBuf (self.0.clone(), self.1, self.2)
     }
 }
+
+#[derive(Show, Copy)]
+enum Control {
+    Hangup,
+    New,
+    Append(usize)
+}
+
+
+struct ReadBuf (AppendBuf<'static>);
 
 pub type TimerCB<'a> = FnMut(&mut Reactor)->bool + 'a;
 
@@ -71,11 +82,33 @@ impl Buf for StreamBuf {
     }
 }
 
+impl Buf for ReadBuf {
+    fn remaining(&self) -> usize {
+        self.0.len() as usize
+    }
+
+    fn bytes<'b>(&'b self) -> &'b [u8] {
+        self.0.as_window_slice()
+    }
+
+    fn advance(&mut self, cnt: usize) {
+        self.0.advance(cnt as u32).unwrap();
+    }
+}
+
+impl MutBuf for ReadBuf {
+    fn mut_bytes<'b>(&'b mut self) -> &'b mut [u8] {
+        self.0.as_mut_window_slice()
+    }
+}
+
+
 struct Connection {
         sock: TcpSocket,
         outbuf: DList<StreamBuf>,
         interest: event::Interest,
-        conn_tx: SyncSender<StreamBuf>
+        conn_tx: SyncSender<StreamBuf>,
+        buf: ReadBuf
 }
 
 impl Connection {
@@ -84,7 +117,8 @@ impl Connection {
             sock: s,
             outbuf: DList::new(),
             interest: event::HUP,
-            conn_tx: tx
+            conn_tx: tx,
+            buf: ReadBuf(AppendBuf::empty())
         }
     }
 
@@ -116,6 +150,22 @@ impl Connection {
     }
 
 
+    fn read(&mut self) -> MioResult<NonBlock<usize>> {
+        self.sock.read(&mut self.buf)
+    }
+}
+
+
+/// Configuration for the Net Engine
+/// queue_size: All queues, both inbound and outbound
+/// read_buf_sz: The size of the read buffer allocatod
+pub struct NetEngineConfig {
+    queue_size: usize,
+    read_buf_sz: usize,
+    min_read_buf_sz: usize,
+    max_connections: usize,
+    poll_timeout_ms: usize,
+    allocator: Option<Arc<Box<Allocator>>>
 }
 
 pub struct NetEngine<'a> {
@@ -125,33 +175,34 @@ pub struct NetEngine<'a> {
 
 
 impl<'a> NetEngine<'a> {
-    /// * buf_sz: the size of the buffer that will be used to read from and send to sockets
-    ///         this should be set to the size of your MTU, likely 1500 bytes
-    /// * max_conns: Size for a pre-allocated array of containers for Connection objects
-    /// * max_queue_sz: Size of the default sync channel through which buffers are sent
-    pub fn new(buf_sz: usize, max_conns: usize, max_queue_sz: usize) -> NetEngine<'a> {
 
-        NetEngine { inner: EngineInner::new(buf_sz, max_conns, max_queue_sz),
-                    event_loop: EventLoop::configured(NetEngine::event_loop_config()).unwrap() }
+    /// Construct a new NetEngine with (hopefully) intelligent defaults
+    ///
+    pub fn new() -> NetEngine<'a> {
+        let config = NetEngineConfig {
+            queue_size: 524288,
+            read_buf_sz: 1536,
+            min_read_buf_sz: 64,
+            allocator: None,
+            max_connections: 10240,
+            poll_timeout_ms: 100
+        };
+
+        NetEngine::configured(config)
     }
 
-    /// * buf_sz: the size of the buffer that will be used to read from and send to sockets
-    ///         this should be set to the size of your MTU, likely 1500 bytes
-    /// * max_conns: Size for a pre-allocated array of containers for Connection objects
-    /// * max_queue_sz: Size of the default sync channel through which buffers are sent
-    /// * a: Specialized allocator for the buffers to be read
-    pub fn new_with_alloc(buf_sz: usize,
-               max_conns: usize,
-               max_queue_sz: usize,
-               a: Arc<Box<Allocator>>) -> NetEngine<'a> {
-        NetEngine { inner: EngineInner::new_with_alloc(buf_sz, max_conns, max_queue_sz, a),
-                    event_loop: EventLoop::configured(NetEngine::event_loop_config()).unwrap() }
-     }
+    /// Construct a new engine with defaults specified by the user
+    pub fn configured(cfg: NetEngineConfig) -> NetEngine<'a> {
+        NetEngine { event_loop: EventLoop::configured(
+                       NetEngine::event_loop_config(cfg.queue_size, cfg.poll_timeout_ms)).unwrap(),
+                    inner: EngineInner::new(cfg)
+        }
+    }
 
-    fn event_loop_config() -> EventLoopConfig {
+    fn event_loop_config(queue_sz : usize, timeout: usize) -> EventLoopConfig {
         EventLoopConfig {
-            io_poll_timeout_ms: 200,
-            notify_capacity: 1_048_576,
+            io_poll_timeout_ms: timeout,
+            notify_capacity: queue_sz,
             messages_per_tick: 512,
             timer_tick_ms: 100,
             timer_wheel_size: 1_024,
@@ -184,6 +235,10 @@ impl<'a> NetEngine<'a> {
         self.event_loop.channel()
     }
 
+    /// Set a timeout to be executed by the event loop after duration
+    /// Minimum expected resolution is the tick duration of the event loop
+    /// poller, but it could be shorted depending on how many events are
+    /// occurring
     pub fn timeout(&mut self, timeout: Duration, callback: Box<TimerCB<'a>>) {
         let tok = self.inner.timeouts.insert((callback, None)).map_err(|_|()).unwrap();
         let handle = self.event_loop.timeout(tok, timeout).unwrap();
@@ -206,34 +261,24 @@ impl<'a> NetEngine<'a> {
     }
 }
 
+
 struct EngineInner<'a> {
     listeners: Slab<(TcpAcceptor, SyncSender<StreamBuf>)>,
     timeouts: Slab<(Box<TimerCB<'a>>, Option<Timeout>)>,
     conns: Slab<Connection>,
-    alloc: Option<Arc<Box<Allocator>>>,
-    buf_sz: usize,
-    queue_sz: usize
+    config: NetEngineConfig,
 }
 
 impl<'a> EngineInner<'a> {
 
-    pub fn new(buf_sz: usize, max_conns: usize, max_queue_sz: usize) -> EngineInner<'a> {
+    pub fn new(cfg: NetEngineConfig) -> EngineInner<'a> {
+
         EngineInner {
             listeners: Slab::new_starting_at(Token(0), 128),
             timeouts: Slab::new_starting_at(Token(129), 255),
-            conns: Slab::new_starting_at(Token(256), max_conns + 256),
-            buf_sz: buf_sz,
-            queue_sz: max_queue_sz,
-            alloc: None
+            conns: Slab::new_starting_at(Token(256), cfg.max_connections + 256),
+            config: cfg
         }
-    }
-
-    pub fn new_with_alloc(buf_sz: usize,
-               max_conns: usize,
-               max_queue_sz: usize,
-               a: Arc<Box<Allocator>>) -> EngineInner<'a> {
-        let ns = EngineInner::new(buf_sz, max_conns, max_queue_sz);
-        EngineInner { alloc: Some(a), ..ns }
     }
 
     pub fn connect<'b>(&mut self,
@@ -245,7 +290,7 @@ impl<'a> EngineInner<'a> {
         match TcpSocket::v4() {
             Ok(s) => {
                 //s.set_tcp_nodelay(true); TODO: re-add to mio
-                let (tx, rx) = sync_channel(self.queue_sz);
+                let (tx, rx) = sync_channel(self.config.queue_size);
                 match self.conns.insert(Connection::new(s, tx)) {
                     Ok(tok) => match event_loop.register_opt(&self.conns.get(tok).unwrap().sock, tok, event::READABLE, event::PollOpt::edge()) {
                         Ok(..) => match self.conns.get(tok).unwrap().sock.connect(&SockAddr::InetAddr(ip, port as u16)) {
@@ -276,7 +321,7 @@ impl<'a> EngineInner<'a> {
                 match s.bind(&SockAddr::InetAddr(ip, port as u16)) {
                 Ok(l) => match l.listen(255) {
                     Ok(a) => {
-                        let (tx, rx) = sync_channel(self.queue_sz);
+                        let (tx, rx) = sync_channel(self.config.queue_size);
                         match self.listeners.insert((a, tx)) {
                             Ok(token) => {
                                 event_loop.register_opt(&self.listeners.get_mut(token).unwrap().0,
@@ -329,20 +374,22 @@ impl<'a> Handler<Token, StreamBuf> for EngineInner<'a> {
                                    but it is not present in MioHandler connections", token),
                 Some(c) => {
 
-                    let mut b =
-                        if let Some(alloc) = self.alloc.as_ref() {
-                            RWIobuf::new_with_allocator(self.buf_sz, alloc.clone())
-                        } else {
-                            RWIobuf::new(self.buf_sz)
-                        };
+                    let mut newbuf = false;
+                    if c.buf.0.len() < self.config.min_read_buf_sz as u32 {
+                        newbuf = true;
+                        c.buf =
+                            if let Some(alloc) = self.config.allocator.as_ref() {
+                                ReadBuf(AppendBuf::new_with_allocator(self.config.read_buf_sz, alloc.clone()))
+                            } else {
+                                ReadBuf(AppendBuf::new(self.config.read_buf_sz))
+                            };
+                    }
 
-                    let result = unsafe { c.sock.read_slice(b.as_mut_window_slice()) };
-                    match result {
+                    match c.read() {
                         Ok(NonBlock::Ready(n)) => {debug!("read {:?} bytes", n);
-                                  b.advance(n as u32).unwrap();
-                                  b.flip_lo();
-                                  let abuf = b.atomic_read_only().unwrap();
-                                  c.conn_tx.send( StreamBuf (abuf, token) ).unwrap(); },
+                                  let abuf = c.buf.0.atomic_slice_from_end(n as u32).unwrap();
+                                  let ctl = if newbuf { Control::New } else { Control::Append(n) };
+                                  c.conn_tx.send( StreamBuf (abuf, token, ctl) ).unwrap(); },
                         Ok(NonBlock::WouldBlock) => {
                             debug!("Got Readable event for socket, but failed to write any bytes");
                         },
@@ -350,6 +397,7 @@ impl<'a> Handler<Token, StreamBuf> for EngineInner<'a> {
                     };
 
                     if hint.contains(event::HUPHINT) {
+                        c.conn_tx.send( StreamBuf (RWIobuf::empty().atomic_read_only().unwrap(), token, Control::Hangup));
                         close = true;
                     }
                     else {
