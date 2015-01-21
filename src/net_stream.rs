@@ -10,7 +10,7 @@
 //! back through the sender provided by EngineInner::channel or via the
 //! StreamConneciton send_all function for Traversals
 
-use reactor::{Reactor, StreamBuf, Sender};
+use reactor::{Reactor, StreamBuf, Sender, ReactBuf};
 use mio::Token;
 use publisherimpl::Coupler;
 use reactive::{Publisher, Subscriber};
@@ -24,49 +24,49 @@ type Superbox<T> = Arc<RefCell<Box<T>>>;
 
 /// A Traversal style representation of a socket
 #[derive(Clone)]
-pub struct NetStream<'a> {
+pub struct NetStream<'a, U : Send> {
     pub dtx: Sender,
-    pub drx: Arc<Receiver<StreamBuf>>,
+    pub drx: Arc<Receiver<ReactBuf<U>>>,
     pub tok: Token,
 }
 
 
-impl<'a> NetStream<'a>
+impl<'a, U : Send> NetStream<'a, U>
 {
     pub fn new(tok: Token,
-               drx: Receiver<StreamBuf>,
-               dtx: Sender) -> NetStream<'a> {
+               drx: Receiver<ReactBuf<U>>,
+               dtx: Sender) -> NetStream<'a, U> {
         NetStream { tok: tok, drx: Arc::new(drx), dtx: dtx.clone() }
     }
 }
 
-pub struct NetStreamer<'a>
+pub struct NetStreamer<'a, U : Send>
 {
-    stream: NetStream<'a>,
-    subscriber: Option<Box<Subscriber<Input=StreamBuf> + 'a >>
+    stream: NetStream<'a, U>,
+    subscriber: Option<Box<Subscriber<Input=ReactBuf<U>> + 'a >>
     //subscriber: Option<Box<Subscriber<Input=<NetStreamer<'a> as Publisher<'a>>::Output> + 'a >>
 }
 
-impl<'a> Subscriber for NetStreamer<'a>
+impl<'a, U : Send> Subscriber for NetStreamer<'a, U>
 {
-    type Input = StreamBuf;
-    fn on_next(&mut self, StreamBuf (buf, _, ctl) : StreamBuf) -> bool {
+    type Input = StreamBuf; 
+    fn on_next(&mut self, StreamBuf (buf, _) : StreamBuf) -> bool {
 
         //TODO better handle queue failure, maybe put the returned buf
         //isizeo a recovery queue
-        match self.stream.dtx.send(StreamBuf(buf, self.stream.tok, ctl)) {
+        match self.stream.dtx.send(StreamBuf(buf, self.stream.tok)) {
             Ok(()) => true,
             Err(_) => false
         }
     }
 }
 
-impl<'a> Publisher<'a> for NetStreamer<'a>
+impl<'a, U : Send> Publisher<'a> for NetStreamer<'a, U> 
 {
-    type Output = StreamBuf;
+    type Output = ReactBuf<U>;
 
     //fn subscribe(&mut self, s: Box<Subscriber<Input=<Self as Publisher<'a>>::Output > + 'a>) {
-    fn subscribe(&mut self, s: Box<Subscriber<Input=StreamBuf> + 'a>) {
+    fn subscribe(&mut self, s: Box<Subscriber<Input=ReactBuf<U>> + 'a>) {
         //let t: Box<Subscriber<Input=<Self as Publisher<'a>>::Output> + 'a> = s;
         self.subscriber = Some(s);
         self.subscriber.as_mut().unwrap().on_subscribe(0);

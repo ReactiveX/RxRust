@@ -46,6 +46,9 @@ use protocol::Protocol;
 #[derive(Show)]
 pub struct StreamBuf (pub AROIobuf, pub Token);
 
+#[derive(Show)]
+pub struct ReactBuf<T> (pub T, pub Token);
+
 unsafe impl Send for StreamBuf {}
 
 impl Clone for StreamBuf {
@@ -98,21 +101,21 @@ impl MutBuf for ReadBuf {
 
 
 struct Connection<T, U>
-where T : Protocol<Output=U>
+where T : Protocol<Output=U>, U : Send
 {
         sock: TcpSocket,
         outbuf: DList<StreamBuf>,
         interest: event::Interest,
-        conn_tx: SyncSender<StreamBuf>,
+        conn_tx: SyncSender<ReactBuf<U>>,
         marker: usize,
         proto: T,
         buf: ReadBuf
 }
 
 impl<T, U> Connection<T, U>
-where T: Protocol<Output=U>
+where T: Protocol<Output=U>, U: Send
 {
-    pub fn new(s: TcpSocket, tx: SyncSender<StreamBuf>, rbuf: ReadBuf) -> Connection<T, U> {
+    pub fn new(s: TcpSocket, tx: SyncSender<ReactBuf<U>>, rbuf: ReadBuf) -> Connection<T, U> {
         Connection {
             sock: s,
             outbuf: DList::new(),
@@ -170,14 +173,14 @@ pub struct NetEngineConfig {
     allocator: Option<Arc<Box<Allocator>>>
 }
 
-pub struct NetEngine<'a, T, U> where T: Protocol<Output=U> {
+pub struct NetEngine<'a, T, U> where T: Protocol<Output=U>, U : Send {
     inner: EngineInner<'a, T, U>,
     event_loop: Reactor
 }
 
 
 impl<'a, T, U> NetEngine<'a, T, U>
-where T: Protocol<Output=U>
+where T: Protocol<Output=U>, U : Send
 {
 
     /// Construct a new NetEngine with (hopefully) intelligent defaults
@@ -219,7 +222,7 @@ where T: Protocol<Output=U>
     /// and sent down the supplied Sender channel along with the Token of the connection
     pub fn connect<'b>(&mut self,
                    hostname: &str,
-                   port: usize) -> Result<NetStream<'b>, String> {
+                   port: usize) -> Result<NetStream<'b, U>, String> {
         self.inner.connect(hostname, port, &mut self.event_loop)
     }
 
@@ -230,7 +233,7 @@ where T: Protocol<Output=U>
     /// this can be called multiple times for different ips/ports
     pub fn listen<'b>(&mut self,
                   addr: &'b str,
-                  port: usize) -> Result<Receiver<StreamBuf>, String> {
+                  port: usize) -> Result<Receiver<ReactBuf<U>>, String> {
         self.inner.listen(addr, port, &mut self.event_loop)
     }
 
@@ -267,16 +270,16 @@ where T: Protocol<Output=U>
 
 
 struct EngineInner<'a, T, U>
-where T: Protocol<Output=U>
+where T: Protocol<Output=U>, U : Send
 {
-    listeners: Slab<(TcpAcceptor, SyncSender<StreamBuf>)>,
+    listeners: Slab<(TcpAcceptor, SyncSender<ReactBuf<U>>)>,
     timeouts: Slab<(Box<TimerCB<'a>>, Option<Timeout>)>,
     conns: Slab<Connection<T, U>>,
     config: NetEngineConfig,
 }
 
 impl<'a, T, U> EngineInner<'a, T, U>
-where T: Protocol<Output=U>
+where T: Protocol<Output=U>, U : Send
 {
 
     pub fn new(cfg: NetEngineConfig) -> EngineInner<'a, T, U> {
@@ -292,7 +295,7 @@ where T: Protocol<Output=U>
     pub fn connect<'b>(&mut self,
                    hostname: &str,
                    port: usize,
-                   event_loop: &mut Reactor) -> Result<NetStream<'b>, String>
+                   event_loop: &mut Reactor) -> Result<NetStream<'b, U>, String>
     {
         let ip = get_host_addresses(hostname).unwrap()[0]; //TODO manage receiving multiple IPs per hostname, random sample or something
         match TcpSocket::v4() {
@@ -320,7 +323,7 @@ where T: Protocol<Output=U>
     pub fn listen<'b>(&mut self,
                   addr: &'b str,
                   port: usize,
-                  event_loop: &mut Reactor) -> Result<Receiver<StreamBuf>, String>
+                  event_loop: &mut Reactor) -> Result<Receiver<ReactBuf<U>>, String>
     {
         let ip = get_host_addresses(addr).unwrap()[0];
         match TcpSocket::v4() {
@@ -361,7 +364,7 @@ where T: Protocol<Output=U>
 }
 
 impl<'a, T, U> Handler<Token, StreamBuf> for EngineInner<'a, T, U>
-where T: Protocol<Output=U>
+where T: Protocol<Output=U>, U : Send
 {
 
     fn readable(&mut self, event_loop: &mut Reactor, token: Token, hint: event::ReadHint) {
@@ -399,13 +402,13 @@ where T: Protocol<Output=U>
                                 None => {},
                                 Some((item, consumed)) => {
                                     c.marker += consumed;
-                                    c.conn_tx.send( (item, token));
-                                    if c.buf.0.len() < self.config.min_read_buf_sz {
+                                    c.conn_tx.send( ReactBuf(item, token));
+                                    if c.buf.0.len() < self.config.min_read_buf_sz as u32 {
                                         let newbuf = self.new_buf();
                                         if consumed < n {
                                             // we didn't eat all of the bytes we just read
                                             // so we must move them to the new buffer
-                                            newbuf.fill(c.buf.slice_from_end((n - consumed) as u32));
+                                            newbuf.0.fill(c.buf.0.slice_from_end((n - consumed) as u32));
                                         }
                                         c.buf = newbuf;
                                         c.marker = 0;
