@@ -200,8 +200,7 @@ where T: Protocol<Output=U>, U : Send
 
     /// Construct a new engine with defaults specified by the user
     pub fn configured(cfg: NetEngineConfig) -> NetEngine<'a, T, U> {
-        NetEngine { event_loop: EventLoop::configured(
-                       NetEngine::event_loop_config(cfg.queue_size, cfg.poll_timeout_ms)).unwrap(),
+        NetEngine { event_loop: EventLoop::configured(NetEngine::<'a, T, U>::event_loop_config(cfg.queue_size, cfg.poll_timeout_ms)).unwrap(),
                     inner: EngineInner::new(cfg)
         }
     }
@@ -302,7 +301,8 @@ where T: Protocol<Output=U>, U : Send
             Ok(s) => {
                 //s.set_tcp_nodelay(true); TODO: re-add to mio
                 let (tx, rx) = sync_channel(self.config.queue_size);
-                match self.conns.insert(Connection::new(s, tx, self.new_buf())) {
+                let buf = new_buf(self.config.read_buf_sz, self.config.allocator.clone());
+                match self.conns.insert(Connection::new(s, tx, buf)) {
                     Ok(tok) => match event_loop.register_opt(&self.conns.get(tok).unwrap().sock, tok, event::READABLE, event::PollOpt::edge()) {
                         Ok(..) => match self.conns.get(tok).unwrap().sock.connect(&SockAddr::InetAddr(ip, port as u16)) {
                             Ok(..) => {
@@ -353,13 +353,6 @@ where T: Protocol<Output=U>, U : Send
         }
     }
 
-    fn new_buf(&self) -> ReadBuf {
-        if let Some(alloc) = self.config.allocator.as_ref() {
-            ReadBuf(AppendBuf::new_with_allocator(self.config.read_buf_sz, alloc.clone()))
-        } else {
-            ReadBuf(AppendBuf::new(self.config.read_buf_sz))
-        }
-    }
 
 }
 
@@ -371,10 +364,13 @@ where T: Protocol<Output=U>, U : Send
         debug!("mio_processor::readable top, token: {:?}", token);
         let mut close = false;
         if self.listeners.contains(token) {
+            let calloc = &self.config.allocator;
+            let buf_sz = self.config.read_buf_sz;
             let (ref mut list, ref tx) = *self.listeners.get_mut(token).unwrap();
                 match list.accept() {
                     Ok(NonBlock::Ready(sock)) => {
-                        match self.conns.insert(Connection::new(sock, tx.clone(), self.new_buf())) {
+                        let buf = new_buf(buf_sz, calloc.clone());
+                        match self.conns.insert(Connection::new(sock, tx.clone(), buf)) {
                             Ok(tok) =>  {
                                 event_loop.register_opt(&self.conns.get(tok).unwrap().sock,
                                                         tok, event::READABLE | event::HUP,
@@ -404,7 +400,7 @@ where T: Protocol<Output=U>, U : Send
                                     c.marker += consumed;
                                     c.conn_tx.send( ReactBuf(item, token));
                                     if c.buf.0.len() < self.config.min_read_buf_sz as u32 {
-                                        let newbuf = self.new_buf();
+                                        let mut newbuf = new_buf(self.config.read_buf_sz, self.config.allocator.clone());
                                         if consumed < n {
                                             // we didn't eat all of the bytes we just read
                                             // so we must move them to the new buffer
@@ -471,3 +467,10 @@ where T: Protocol<Output=U>, U : Send
     }
 }
 
+fn new_buf(sz: usize, calloc: Option<Arc<Box<Allocator>>>) -> ReadBuf {
+    if let Some(alloc) = calloc {
+        ReadBuf(AppendBuf::new_with_allocator(sz, alloc))
+    } else {
+        ReadBuf(AppendBuf::new(sz))
+    }
+}

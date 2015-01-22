@@ -1,7 +1,7 @@
 
 use iobuf::{AppendBuf, AROIobuf, Iobuf};
 
-trait Protocol {
+pub trait Protocol {
     type Output;
 
     fn new() -> Self;
@@ -10,7 +10,7 @@ trait Protocol {
 }
 
 
-struct BufProtocol;
+pub struct BufProtocol;
 
 impl Protocol for BufProtocol {
     type Output = AROIobuf;
