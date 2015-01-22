@@ -24,7 +24,7 @@ use rx::subscriber::{StdoutSubscriber, Decoupler};
 use rx::processor::{MapVal1, Map, TraceWhile, Reduce};
 use rx::sendable::{Sendable};
 use rx::reactor::{StreamBuf, NetEngine, Reactor};
-
+use rx::protocol::{BufProtocol};
 use std::mem;
 use std::str;
 use std::io::Timer;
@@ -59,7 +59,7 @@ fn main() {
 
     println!("You are here");
 
-    let mut ne = NetEngine::new(1500, 100, 100);
+    let mut ne = NetEngine<BufProtocol::new(1500, 100, 100);
 
     let srv_rx = ne.listen("127.0.0.1", 10000).unwrap();
     let cli = ne.connect("127.0.0.1", 10000).unwrap();
@@ -91,7 +91,7 @@ fn main() {
 
     let guard = Thread::spawn(out);
 
-    let mut buf = RWIobuf::from_str_copy_with_allocator("AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwXxYyZz", MYALLOC.clone());
+    let mut buf = RWIobuf::from_str_copy_with_allocator("AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwXxYyZz012345678901", MYALLOC.clone());
     cli.dtx.send( StreamBuf (buf.atomic_read_only().unwrap(), token)).unwrap();
     // Start the event loop
     ne.run();

@@ -1,12 +1,12 @@
 
-use iobuf::{AppendBuf, AROIobuf, Iobuf};
+use iobuf::{AROIobuf, Iobuf};
 
 pub trait Protocol {
-    type Output;
+    type Output : Send + 'static;
 
     fn new() -> Self;
 
-    fn append(&mut self, &AROIobuf) -> Option<(Self::Output, usize)>;
+    fn append(&mut self, &AROIobuf) -> Option<(Self::Output, AROIobuf, u32)>;
 }
 
 
@@ -19,9 +19,10 @@ impl Protocol for BufProtocol {
         BufProtocol
     }
 
-    fn append(&mut self, buf: &AROIobuf) -> Option<(<Self as Protocol>::Output, usize)> {
+    fn append(&mut self, buf: &AROIobuf) -> Option<(<Self as Protocol>::Output, AROIobuf, u32)> {
         if buf.len() >= 64 {
-            Some((buf.split_at(64).unwrap().0, 64))
+            let (a, b) = buf.split_at(64).unwrap();
+            Some((a, b, 64))
         } else {
             None
         }

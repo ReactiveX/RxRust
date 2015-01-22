@@ -47,7 +47,7 @@ use protocol::Protocol;
 pub struct StreamBuf (pub AROIobuf, pub Token);
 
 #[derive(Show)]
-pub struct ReactBuf<T> (pub T, pub Token);
+pub struct ProtoMsg<T> (pub T, pub Token);
 
 unsafe impl Send for StreamBuf {}
 
@@ -100,22 +100,22 @@ impl MutBuf for ReadBuf {
 }
 
 
-struct Connection<T, U>
-where T : Protocol<Output=U>, U : Send
+struct Connection<T>
+where T : Protocol, <T as Protocol>::Output : Send
 {
         sock: TcpSocket,
         outbuf: DList<StreamBuf>,
         interest: event::Interest,
-        conn_tx: SyncSender<ReactBuf<U>>,
-        marker: usize,
+        conn_tx: SyncSender<ProtoMsg<<T as Protocol>::Output>>,
+        marker: u32,
         proto: T,
         buf: ReadBuf
 }
 
-impl<T, U> Connection<T, U>
-where T: Protocol<Output=U>, U: Send
+impl<T> Connection<T>
+where T : Protocol, <T as Protocol>::Output : Send
 {
-    pub fn new(s: TcpSocket, tx: SyncSender<ReactBuf<U>>, rbuf: ReadBuf) -> Connection<T, U> {
+    pub fn new(s: TcpSocket, tx: SyncSender<ProtoMsg<<T as Protocol>::Output>>, rbuf: ReadBuf) -> Connection<T> {
         Connection {
             sock: s,
             outbuf: DList::new(),
@@ -154,7 +154,6 @@ where T: Protocol<Output=U>, U: Send
         self.outbuf.len()
     }
 
-
     fn read(&mut self) -> MioResult<NonBlock<usize>> {
         self.sock.read(&mut self.buf)
     }
@@ -173,19 +172,21 @@ pub struct NetEngineConfig {
     allocator: Option<Arc<Box<Allocator>>>
 }
 
-pub struct NetEngine<'a, T, U> where T: Protocol<Output=U>, U : Send {
-    inner: EngineInner<'a, T, U>,
+pub struct NetEngine<'a, T> 
+where T : Protocol, <T as Protocol>::Output : Send
+{
+    inner: EngineInner<'a, T>,
     event_loop: Reactor
 }
 
 
-impl<'a, T, U> NetEngine<'a, T, U>
-where T: Protocol<Output=U>, U : Send
+impl<'a, T> NetEngine<'a, T>
+where T : Protocol, <T as Protocol>::Output : Send
 {
 
     /// Construct a new NetEngine with (hopefully) intelligent defaults
     ///
-    pub fn new() -> NetEngine<'a, T, U> {
+    pub fn new() -> NetEngine<'a, T> {
         let config = NetEngineConfig {
             queue_size: 524288,
             read_buf_sz: 1536,
@@ -199,8 +200,8 @@ where T: Protocol<Output=U>, U : Send
     }
 
     /// Construct a new engine with defaults specified by the user
-    pub fn configured(cfg: NetEngineConfig) -> NetEngine<'a, T, U> {
-        NetEngine { event_loop: EventLoop::configured(NetEngine::<'a, T, U>::event_loop_config(cfg.queue_size, cfg.poll_timeout_ms)).unwrap(),
+    pub fn configured(cfg: NetEngineConfig) -> NetEngine<'a, T> {
+        NetEngine { event_loop: EventLoop::configured(NetEngine::<'a, T>::event_loop_config(cfg.queue_size, cfg.poll_timeout_ms)).unwrap(),
                     inner: EngineInner::new(cfg)
         }
     }
@@ -221,7 +222,7 @@ where T: Protocol<Output=U>, U : Send
     /// and sent down the supplied Sender channel along with the Token of the connection
     pub fn connect<'b>(&mut self,
                    hostname: &str,
-                   port: usize) -> Result<NetStream<'b, U>, String> {
+                   port: usize) -> Result<NetStream<'b, <T as Protocol>::Output>, String> {
         self.inner.connect(hostname, port, &mut self.event_loop)
     }
 
@@ -232,7 +233,7 @@ where T: Protocol<Output=U>, U : Send
     /// this can be called multiple times for different ips/ports
     pub fn listen<'b>(&mut self,
                   addr: &'b str,
-                  port: usize) -> Result<Receiver<ReactBuf<U>>, String> {
+                  port: usize) -> Result<Receiver<ProtoMsg<<T as Protocol>::Output>>, String> {
         self.inner.listen(addr, port, &mut self.event_loop)
     }
 
@@ -268,20 +269,20 @@ where T: Protocol<Output=U>, U : Send
 }
 
 
-struct EngineInner<'a, T, U>
-where T: Protocol<Output=U>, U : Send
+struct EngineInner<'a, T>
+where T : Protocol, <T as Protocol>::Output : Send
 {
-    listeners: Slab<(TcpAcceptor, SyncSender<ReactBuf<U>>)>,
+    listeners: Slab<(TcpAcceptor, SyncSender<ProtoMsg<<T as Protocol>::Output>>)>,
     timeouts: Slab<(Box<TimerCB<'a>>, Option<Timeout>)>,
-    conns: Slab<Connection<T, U>>,
+    conns: Slab<Connection<T>>,
     config: NetEngineConfig,
 }
 
-impl<'a, T, U> EngineInner<'a, T, U>
-where T: Protocol<Output=U>, U : Send
+impl<'a, T> EngineInner<'a, T>
+where T : Protocol, <T as Protocol>::Output : Send
 {
 
-    pub fn new(cfg: NetEngineConfig) -> EngineInner<'a, T, U> {
+    pub fn new(cfg: NetEngineConfig) -> EngineInner<'a, T> {
 
         EngineInner {
             listeners: Slab::new_starting_at(Token(0), 128),
@@ -294,7 +295,7 @@ where T: Protocol<Output=U>, U : Send
     pub fn connect<'b>(&mut self,
                    hostname: &str,
                    port: usize,
-                   event_loop: &mut Reactor) -> Result<NetStream<'b, U>, String>
+                   event_loop: &mut Reactor) -> Result<NetStream<'b, <T as Protocol>::Output>, String>
     {
         let ip = get_host_addresses(hostname).unwrap()[0]; //TODO manage receiving multiple IPs per hostname, random sample or something
         match TcpSocket::v4() {
@@ -323,7 +324,7 @@ where T: Protocol<Output=U>, U : Send
     pub fn listen<'b>(&mut self,
                   addr: &'b str,
                   port: usize,
-                  event_loop: &mut Reactor) -> Result<Receiver<ReactBuf<U>>, String>
+                  event_loop: &mut Reactor) -> Result<Receiver< ProtoMsg< <T as Protocol>::Output >>, String>
     {
         let ip = get_host_addresses(addr).unwrap()[0];
         match TcpSocket::v4() {
@@ -356,8 +357,8 @@ where T: Protocol<Output=U>, U : Send
 
 }
 
-impl<'a, T, U> Handler<Token, StreamBuf> for EngineInner<'a, T, U>
-where T: Protocol<Output=U>, U : Send
+impl<'a, T> Handler<Token, StreamBuf> for EngineInner<'a, T>
+where T : Protocol, <T as Protocol>::Output : Send
 {
 
     fn readable(&mut self, event_loop: &mut Reactor, token: Token, hint: event::ReadHint) {
@@ -389,28 +390,30 @@ where T: Protocol<Output=U>, U : Send
                 None    => error!("Got a readable event for token {:?},
                                    but it is not present in MioHandler connections", token),
                 Some(c) => {
-
                     match c.read() {
                         Ok(NonBlock::Ready(n)) => {
                             debug!("read {:?} bytes", n);
-                            let abuf = c.buf.0.atomic_slice_pos_from_begin(n as u32, -1).unwrap();
-                            match c.proto.append(&abuf) {
-                                None => {},
-                                Some((item, consumed)) => {
-                                    c.marker += consumed;
-                                    c.conn_tx.send( ReactBuf(item, token));
-                                    if c.buf.0.len() < self.config.min_read_buf_sz as u32 {
-                                        let mut newbuf = new_buf(self.config.read_buf_sz, self.config.allocator.clone());
-                                        if consumed < n {
-                                            // we didn't eat all of the bytes we just read
-                                            // so we must move them to the new buffer
-                                            newbuf.0.fill(c.buf.0.slice_from_end((n - consumed) as u32));
-                                        }
-                                        c.buf = newbuf;
-                                        c.marker = 0;
+                            let mut abuf = c.buf.0.atomic_slice_pos_from_begin(c.marker, n as i64).unwrap();
+                            loop { 
+                                match c.proto.append(&abuf) {
+                                    None => {break},
+                                    Some((item, remaining, consumed)) => {
+                                        c.conn_tx.send( ProtoMsg(item, token));
+                                        abuf = remaining;
+                                        c.marker += consumed;
                                     }
                                 }
-                            };
+                            }
+                            if c.buf.0.len() < self.config.min_read_buf_sz as u32 {
+                                let mut newbuf = new_buf(self.config.read_buf_sz, self.config.allocator.clone());
+                                if abuf.len() > 0 {
+                                    // we didn't eat all of the bytes we just read
+                                    // so we must move them to the new buffer
+                                    unsafe { newbuf.0.fill(abuf.as_window_slice()) };
+                                }
+                                c.buf = newbuf;
+                                c.marker = 0;
+                            }
                         }
                         Ok(NonBlock::WouldBlock) => {
                             debug!("Got Readable event for socket, but failed to write any bytes");

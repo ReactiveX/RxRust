@@ -10,7 +10,7 @@
 //! back through the sender provided by EngineInner::channel or via the
 //! StreamConneciton send_all function for Traversals
 
-use reactor::{Reactor, StreamBuf, Sender, ReactBuf};
+use reactor::{Reactor, StreamBuf, Sender, ProtoMsg};
 use mio::Token;
 use publisherimpl::Coupler;
 use reactive::{Publisher, Subscriber};
@@ -26,7 +26,7 @@ type Superbox<T> = Arc<RefCell<Box<T>>>;
 #[derive(Clone)]
 pub struct NetStream<'a, U : Send> {
     pub dtx: Sender,
-    pub drx: Arc<Receiver<ReactBuf<U>>>,
+    pub drx: Arc<Receiver<ProtoMsg<U>>>,
     pub tok: Token,
 }
 
@@ -34,7 +34,7 @@ pub struct NetStream<'a, U : Send> {
 impl<'a, U : Send> NetStream<'a, U>
 {
     pub fn new(tok: Token,
-               drx: Receiver<ReactBuf<U>>,
+               drx: Receiver<ProtoMsg<U>>,
                dtx: Sender) -> NetStream<'a, U> {
         NetStream { tok: tok, drx: Arc::new(drx), dtx: dtx.clone() }
     }
@@ -43,7 +43,7 @@ impl<'a, U : Send> NetStream<'a, U>
 pub struct NetStreamer<'a, U : Send>
 {
     stream: NetStream<'a, U>,
-    subscriber: Option<Box<Subscriber<Input=ReactBuf<U>> + 'a >>
+    subscriber: Option<Box<Subscriber<Input=ProtoMsg<U>> + 'a >>
     //subscriber: Option<Box<Subscriber<Input=<NetStreamer<'a> as Publisher<'a>>::Output> + 'a >>
 }
 
@@ -63,10 +63,10 @@ impl<'a, U : Send> Subscriber for NetStreamer<'a, U>
 
 impl<'a, U : Send> Publisher<'a> for NetStreamer<'a, U> 
 {
-    type Output = ReactBuf<U>;
+    type Output = ProtoMsg<U>;
 
     //fn subscribe(&mut self, s: Box<Subscriber<Input=<Self as Publisher<'a>>::Output > + 'a>) {
-    fn subscribe(&mut self, s: Box<Subscriber<Input=ReactBuf<U>> + 'a>) {
+    fn subscribe(&mut self, s: Box<Subscriber<Input=ProtoMsg<U>> + 'a>) {
         //let t: Box<Subscriber<Input=<Self as Publisher<'a>>::Output> + 'a> = s;
         self.subscriber = Some(s);
         self.subscriber.as_mut().unwrap().on_subscribe(0);
@@ -119,7 +119,7 @@ use reactive::{Publisher, Subscriber};
     #[test]
     fn oneway_test() {
 
-        let mut ne = NetEngine::new(8, 100, 100);
+        let mut ne = NetEngine::new();
         let srv_rx = ne.listen("127.0.0.1", 10000).unwrap();
         let cl = { ne.connect("127.0.0.1", 10000).unwrap().clone() };
 
