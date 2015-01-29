@@ -3,15 +3,15 @@
 // This software may be modified and distributed under the terms
 // of the MIT license.  See the LICENSE file for details.
 
-use std::fmt::Show;
+use std::fmt::Display;
 use reactive::{Subscriber};
 use sendable::Sendable;
 
-pub struct StdoutSubscriber<A> where A : Show {
+pub struct StdoutSubscriber<A> where A : Display {
     index: Option<usize>
 }
 
-impl<A> StdoutSubscriber<A> where A : Show {
+impl<A> StdoutSubscriber<A> where A : Display {
 
     pub fn new() -> StdoutSubscriber<A> {
         StdoutSubscriber {
@@ -20,11 +20,11 @@ impl<A> StdoutSubscriber<A> where A : Show {
     }
 }
 
-impl<A> Subscriber for StdoutSubscriber<A> where A : Show {
+impl<A> Subscriber for StdoutSubscriber<A> where A : Display {
     type Input = A;
 
     fn on_next(&mut self, t: A) -> bool {
-        println!("{:?}", t);
+        println!("{}", t);
         true
     }
 }

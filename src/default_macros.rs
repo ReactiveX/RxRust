@@ -37,3 +37,16 @@ macro_rules! default_pass_subscribe (
         }
     )
 );
+
+#[macro_export]
+macro_rules! protocol_size {
+    ($($name:ident = $value:expr),+) => {$(
+        #[derive(Debug)]
+        struct $name;
+        impl HasSize for $name {
+            #[inline(always)]
+            fn size() -> u32 { $value }
+        }
+    )*}
+}
+

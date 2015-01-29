@@ -4,27 +4,27 @@
 // of the MIT license.  See the LICENSE file for details.
 //
 
-use std::fmt::Show;
+use std::fmt::Debug;
 use reactive::{Publisher, Subscriber};
 use sendable::Sendable;
 
-pub struct Trace<'a, I> where I : Show {
+pub struct DoDebug<'a, I> where I : Debug {
     subscriber: Option<Box<Subscriber<Input=I> + 'a>>,
     index: Option<usize>
 }
 
-impl<'a, I> Trace<'a, I> where I : Show {
+impl<'a, I> DoDebug<'a, I> where I : Debug {
 
-    pub fn new() -> Trace<'a, I>
+    pub fn new() -> DoDebug<'a, I>
     {
-        Trace {
+        DoDebug {
             subscriber: None,
             index: None
         }
     }
 }
 
-impl<'a, I> Publisher<'a> for Trace<'a, I> where I : Show {
+impl<'a, I> Publisher<'a> for DoDebug<'a, I> where I : Debug {
     type Output = I;
     fn subscribe(&mut self, s: Box<Subscriber<Input=I> + 'a>) {
         let t: Box<Subscriber<Input=I>+'a> = s;
@@ -33,7 +33,7 @@ impl<'a, I> Publisher<'a> for Trace<'a, I> where I : Show {
     }
 }
 
-impl<'a, I> Subscriber for Trace<'a, I> where I : Show {
+impl<'a, I> Subscriber for DoDebug<'a, I> where I : Debug {
     type Input = I;
     fn on_next(&mut self, t: I) -> bool {
         match self.subscriber.as_mut() {
@@ -47,18 +47,18 @@ impl<'a, I> Subscriber for Trace<'a, I> where I : Show {
     default_pass_error!();
 }
 
-pub struct TraceWhile<'a, I, F> where I : Show, F : Fn(&I) -> bool {
+pub struct DebugWhile<'a, I, F> where I : Debug, F : Fn(&I) -> bool {
     fun: F,
     subscriber: Option<Box<Subscriber<Input=I> + 'a>>,
     index: Option<usize>
 }
 
 
-impl<'a, I, F> TraceWhile<'a, I, F> where I : 'a + Show, F : Fn(&I) -> bool{
+impl<'a, I, F> DebugWhile<'a, I, F> where I : 'a + Debug, F : Fn(&I) -> bool{
 
-    pub fn new( f: F ) -> TraceWhile<'a, I, F>
+    pub fn new( f: F ) -> DebugWhile<'a, I, F>
     {
-        TraceWhile {
+        DebugWhile {
             fun: f,
             subscriber: None,
             index: None
@@ -66,7 +66,7 @@ impl<'a, I, F> TraceWhile<'a, I, F> where I : 'a + Show, F : Fn(&I) -> bool{
     }
 }
 
-impl<'a, I, F> Publisher<'a> for TraceWhile<'a, I, F> where I : Show, F : Fn(&I) -> bool  {
+impl<'a, I, F> Publisher<'a> for DebugWhile<'a, I, F> where I : Debug, F : Fn(&I) -> bool  {
     type Output = I;
     fn subscribe(&mut self, s: Box<Subscriber<Input=I> + 'a>) {
         let s: Box<Subscriber<Input=I>+'a> = s;
@@ -75,7 +75,7 @@ impl<'a, I, F> Publisher<'a> for TraceWhile<'a, I, F> where I : Show, F : Fn(&I)
     }
 }
 
-impl<'a, I, F> Subscriber for TraceWhile<'a, I, F> where I : Show, F : Fn(&I) -> bool {
+impl<'a, I, F> Subscriber for DebugWhile<'a, I, F> where I : Debug, F : Fn(&I) -> bool {
     type Input = I;
 
     default_pass_subscribe!();

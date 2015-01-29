@@ -26,7 +26,7 @@ use mio::event;
 
 use iobuf::{Iobuf, RWIobuf, AROIobuf, Allocator, AppendBuf};
 
-use std::io::net::addrinfo::get_host_addresses;
+use std::old_io::net::addrinfo::get_host_addresses;
 use std::result::Result;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver,SyncSender, sync_channel};
@@ -172,7 +172,7 @@ pub struct NetEngineConfig {
     allocator: Option<Arc<Box<Allocator>>>
 }
 
-pub struct NetEngine<'a, T> 
+pub struct NetEngine<'a, T>
 where T : Protocol, <T as Protocol>::Output : Send
 {
     inner: EngineInner<'a, T>,
@@ -394,7 +394,7 @@ where T : Protocol, <T as Protocol>::Output : Send
                         Ok(NonBlock::Ready(n)) => {
                             debug!("read {:?} bytes", n);
                             let mut abuf = c.buf.0.atomic_slice_pos_from_begin(c.marker, n as i64).unwrap();
-                            loop { 
+                            loop {
                                 match c.proto.append(&abuf) {
                                     None => {break},
                                     Some((item, remaining, consumed)) => {

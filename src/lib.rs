@@ -41,6 +41,10 @@
 #![feature(slicing_syntax)]
 #![feature(unboxed_closures)]
 #![feature(unsafe_destructor)]
+#![feature(libc)]
+#![feature(core)]
+#![feature(io)]
+#![feature(collections)]
 
 extern crate core;
 extern crate mio;
@@ -67,6 +71,7 @@ pub mod net_stream;
 pub mod sendable;
 pub mod mmap_allocator;
 pub mod scheduler;
+#[macro_use]
 pub mod protocol;
 mod processorimpl;
 mod publisherimpl;
@@ -89,7 +94,7 @@ fn main() {
     use processor::{Map};
     use subscriber::{StdoutSubscriber, Decoupler};
     use reactive::{Publisher, Subscriber};
-    use std::io::Timer;
+    use std::old_io::Timer;
     use std::time::Duration;
     use std::sync::mpsc::{channel};
     use std::thread::Thread;

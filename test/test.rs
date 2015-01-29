@@ -2,9 +2,11 @@
 
 extern crate mio;
 extern crate iobuf;
-extern crate rx;
 extern crate alloc;
 extern crate time;
+
+#[macro_use]
+extern crate rx;
 
 #[macro_use]
 extern crate log;
@@ -21,13 +23,14 @@ use std::sync::Arc;
 use rx::reactive::{Publisher, Subscriber};
 use rx::publisher::{IterPublisher, Coupler};
 use rx::subscriber::{StdoutSubscriber, Decoupler};
-use rx::processor::{MapVal1, Map, TraceWhile, Reduce};
+use rx::processor::{MapVal1, Map, DebugWhile, Enumerate};
 use rx::sendable::{Sendable};
-use rx::reactor::{StreamBuf, NetEngine, Reactor};
-use rx::protocol::{BufProtocol};
+use rx::reactor::{StreamBuf, ProtoMsg, NetEngine, Reactor};
+use rx::protocol::{BufProtocol, HasSize};
+
 use std::mem;
 use std::str;
-use std::io::Timer;
+use std::old_io::Timer;
 use std::time::Duration;
 use std::fmt;
 use time::precise_time_ns;
@@ -54,12 +57,15 @@ lazy_static! {
     };
 }
 
+protocol_size!(SixtyFour = 64);
+
 #[test]
 fn main() {
 
     println!("You are here");
 
-    let mut ne = NetEngine<BufProtocol::new(1500, 100, 100);
+    let mut ne = NetEngine::<BufProtocol<SixtyFour>>::new();
+    type Msg = ProtoMsg<AROIobuf>;
 
     let srv_rx = ne.listen("127.0.0.1", 10000).unwrap();
     let cli = ne.connect("127.0.0.1", 10000).unwrap();
@@ -71,10 +77,10 @@ fn main() {
 
     let out = move |:| {
         let mut rec = Box::new(Coupler::new(srv_rx));
-        let mut map1 = Box::new(Map::new(| tup : StreamBuf |  -> (StreamBuf, u64) {  (tup, precise_time_ns()) }));
-        let mut red = Box::new(Reduce::new(0u64, | count, (tup, t) : (StreamBuf, u64) | -> (u64, (StreamBuf, u64, u64)) {let c = count + 1; (c, (tup, t, c)) }));
-        let mut trace = Box::new(TraceWhile::new(| &(_,_,count) : &(StreamBuf, u64, u64) | { count % 10000 == 0 }));
-        let mut map2 = Box::new(MapVal1::new(token, |(StreamBuf (buf, _),_,_), t: &Token| -> StreamBuf { StreamBuf (buf, *t) }));
+        let mut map1 = Box::new(Map::new(| tup |  -> (Msg, u64) {  (tup, precise_time_ns()) }));
+        let mut red = Box::new(Enumerate::new());
+        let mut trace = Box::new(DebugWhile::new(| &(_,count) : &((Msg, u64), u64) | { count % 10000 == 0 }));
+        let mut map2 = Box::new(MapVal1::new(token, |((ProtoMsg (buf, _),_),_) : ((Msg, u64), u64), t: &Token| -> StreamBuf { StreamBuf (buf, *t) }));
         // change the token from t to the token of the connection, that way Decoupler
         // will tell eventloop to send it back out of the tcp connections's pipe
         let mut sen = Box::new(Decoupler::new(dtx));

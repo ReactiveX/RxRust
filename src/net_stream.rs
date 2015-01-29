@@ -86,18 +86,19 @@ impl<'a, U : Send> Publisher<'a> for NetStreamer<'a, U>
 #[cfg(test)]
 mod test {
 use reactor::Reactor;
-use reactor::{StreamBuf, NetEngine};
+use reactor::{StreamBuf, ProtoMsg, NetEngine};
 use std::thread::Thread;
 use std::vec::Vec;
 use std::mem;
 use std::num::Int;
 use std::raw;
-use std::io::timer::sleep;
+use std::old_io::timer::sleep;
 use mio::Token;
-use iobuf::{Iobuf, RWIobuf};
+use iobuf::{Iobuf, RWIobuf, AROIobuf};
 use std::time::Duration;
+use protocol::Protocol;
 use publisher::{Repeat, Coupler};
-use processor::{Map, Take, Trace};
+use processor::{Map, Take, DoDebug};
 use subscriber::{Decoupler, Collect};
 use reactive::{Publisher, Subscriber};
 
@@ -116,10 +117,30 @@ use reactive::{Publisher, Subscriber};
         *(mem::transmute::<*mut u8, *const T>(buf.0.ptr()))
     }}
 
+    pub struct U64Protocol;
+
+    impl Protocol for U64Protocol {
+        type Output = u64;
+
+        fn new() -> U64Protocol {
+            U64Protocol
+        }
+
+        fn append(&mut self, buf: &AROIobuf) -> Option<(<Self as Protocol>::Output, AROIobuf, u32)> {
+            if buf.len() >= 8 {
+                let (a, b) = buf.split_at(8).unwrap();
+                let val = unsafe { *(mem::transmute::<*mut u8, *const u64>(a.ptr())) };
+                Some((val, b, 8))
+            } else {
+                None
+            }
+        }
+    }
+
     #[test]
     fn oneway_test() {
 
-        let mut ne = NetEngine::new();
+        let mut ne = NetEngine::<U64Protocol>::new();
         let srv_rx = ne.listen("127.0.0.1", 10000).unwrap();
         let cl = { ne.connect("127.0.0.1", 10000).unwrap().clone() };
 
@@ -131,8 +152,8 @@ use reactive::{Publisher, Subscriber};
         Thread::spawn(move|| {
             let mut rep = Box::new(Repeat::new(5u64));
             let mut map1 = Box::new(Map::new(|x| isize_to_strbuf(&x)));
-            let mut map2 = Box::new(Map::new(move |StreamBuf (buf, _)| StreamBuf (buf, tok)));
-            let mut trc  = Box::new(Trace::new());
+            let mut map2 = Box::new(Map::new(move | StreamBuf (buf, _) | StreamBuf (buf, tok)));
+            let mut trc  = Box::new(DoDebug::new());
             let mut sen = Box::new(Decoupler::new(dtx));
 
             trc.subscribe(sen);
@@ -148,7 +169,7 @@ use reactive::{Publisher, Subscriber};
             {
                 let mut recv = Box::new(Coupler::new(srv_rx));
                 let mut take = Box::new(Take::new(5));
-                let mut map3 = Box::new(Map::new(|x| strbuf_to_isize(x)));
+                let mut map3 = Box::new(Map::new(| ProtoMsg (x, _) | x ));
                 let mut coll = Box::new(Collect::new(&mut v));
 
                 map3.subscribe(coll);

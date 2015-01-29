@@ -9,20 +9,25 @@ pub trait Protocol {
     fn append(&mut self, &AROIobuf) -> Option<(Self::Output, AROIobuf, u32)>;
 }
 
+pub trait HasSize{ fn size() -> u32; }
 
-pub struct BufProtocol;
+/// A simple Protocol implementation which produces buffers of a fixed size
+#[derive(Debug)]
+pub struct BufProtocol<S : HasSize>;
 
-impl Protocol for BufProtocol {
+
+impl<S : HasSize> Protocol for BufProtocol<S> {
     type Output = AROIobuf;
 
-    fn new() -> BufProtocol {
+    fn new() -> BufProtocol<S> {
         BufProtocol
     }
 
     fn append(&mut self, buf: &AROIobuf) -> Option<(<Self as Protocol>::Output, AROIobuf, u32)> {
-        if buf.len() >= 64 {
-            let (a, b) = buf.split_at(64).unwrap();
-            Some((a, b, 64))
+        let bufsz = <S as HasSize>::size();
+        if buf.len() >= bufsz {
+            let (a, b) = buf.split_at(bufsz).unwrap();
+            Some((a, b, bufsz))
         } else {
             None
         }
