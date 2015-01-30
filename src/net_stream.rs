@@ -1,3 +1,7 @@
+// Copyright (C) 2015 <Rick Richardson r@12sidedtech.com>
+//
+// This software may be modified and distributed under the terms
+// of the MIT license.  See the LICENSE file for details.
 //! A handler for both incoming and outgoing connections,
 //! all incoming connections' data is sent through a standard sync_channel
 //! which is returned from EngineInner::new
@@ -6,7 +10,7 @@
 //! back through the sender provided by EngineInner::channel or via the
 //! StreamConneciton send_all function for Traversals
 
-use reactor::{Reactor, StreamBuf, Sender};
+use reactor::{Reactor, StreamBuf, Sender, ProtoMsg};
 use mio::Token;
 use publisherimpl::Coupler;
 use reactive::{Publisher, Subscriber};
@@ -20,31 +24,32 @@ type Superbox<T> = Arc<RefCell<Box<T>>>;
 
 /// A Traversal style representation of a socket
 #[derive(Clone)]
-pub struct NetStream<'a> {
+pub struct NetStream<'a, U : Send> {
     pub dtx: Sender,
-    pub drx: Arc<Receiver<StreamBuf>>,
+    pub drx: Arc<Receiver<ProtoMsg<U>>>,
     pub tok: Token,
 }
 
 
-impl<'a> NetStream<'a>
+impl<'a, U : Send> NetStream<'a, U>
 {
     pub fn new(tok: Token,
-               drx: Receiver<StreamBuf>,
-               dtx: Sender) -> NetStream<'a> {
+               drx: Receiver<ProtoMsg<U>>,
+               dtx: Sender) -> NetStream<'a, U> {
         NetStream { tok: tok, drx: Arc::new(drx), dtx: dtx.clone() }
     }
 }
 
-pub struct NetStreamer<'a>
+pub struct NetStreamer<'a, U : Send>
 {
-    stream: NetStream<'a>,
-    subscriber: Option<Box< Subscriber<Input=StreamBuf> + 'a>>
+    stream: NetStream<'a, U>,
+    subscriber: Option<Box<Subscriber<Input=ProtoMsg<U>> + 'a >>
+    //subscriber: Option<Box<Subscriber<Input=<NetStreamer<'a> as Publisher<'a>>::Output> + 'a >>
 }
 
-impl<'a> Subscriber for NetStreamer<'a>
+impl<'a, U : Send> Subscriber for NetStreamer<'a, U>
 {
-    type Input = StreamBuf;
+    type Input = StreamBuf; 
     fn on_next(&mut self, StreamBuf (buf, _) : StreamBuf) -> bool {
 
         //TODO better handle queue failure, maybe put the returned buf
@@ -56,13 +61,14 @@ impl<'a> Subscriber for NetStreamer<'a>
     }
 }
 
-impl<'a> Publisher<'a> for NetStreamer<'a>
+impl<'a, U : Send> Publisher<'a> for NetStreamer<'a, U> 
 {
-    type Output = StreamBuf;
+    type Output = ProtoMsg<U>;
 
-    fn subscribe<S>(&mut self, s: Box<S>) where S : Subscriber<Input=StreamBuf> + 'a {
-        let t: Box<Subscriber<Input=StreamBuf>+'a> = s;
-        self.subscriber = Some(t);
+    //fn subscribe(&mut self, s: Box<Subscriber<Input=<Self as Publisher<'a>>::Output > + 'a>) {
+    fn subscribe(&mut self, s: Box<Subscriber<Input=ProtoMsg<U>> + 'a>) {
+        //let t: Box<Subscriber<Input=<Self as Publisher<'a>>::Output> + 'a> = s;
+        self.subscriber = Some(s);
         self.subscriber.as_mut().unwrap().on_subscribe(0);
     }
 
@@ -80,18 +86,19 @@ impl<'a> Publisher<'a> for NetStreamer<'a>
 #[cfg(test)]
 mod test {
 use reactor::Reactor;
-use reactor::{StreamBuf, NetEngine};
+use reactor::{StreamBuf, ProtoMsg, NetEngine};
 use std::thread::Thread;
 use std::vec::Vec;
 use std::mem;
 use std::num::Int;
 use std::raw;
-use std::io::timer::sleep;
+use std::old_io::timer::sleep;
 use mio::Token;
-use iobuf::{Iobuf, RWIobuf};
+use iobuf::{Iobuf, RWIobuf, AROIobuf};
 use std::time::Duration;
+use protocol::Protocol;
 use publisher::{Repeat, Coupler};
-use processor::{Map, Take, Trace};
+use processor::{Map, Take, DoDebug};
 use subscriber::{Decoupler, Collect};
 use reactive::{Publisher, Subscriber};
 
@@ -110,10 +117,30 @@ use reactive::{Publisher, Subscriber};
         *(mem::transmute::<*mut u8, *const T>(buf.0.ptr()))
     }}
 
+    pub struct U64Protocol;
+
+    impl Protocol for U64Protocol {
+        type Output = u64;
+
+        fn new() -> U64Protocol {
+            U64Protocol
+        }
+
+        fn append(&mut self, buf: &AROIobuf) -> Option<(<Self as Protocol>::Output, AROIobuf, u32)> {
+            if buf.len() >= 8 {
+                let (a, b) = buf.split_at(8).unwrap();
+                let val = unsafe { *(mem::transmute::<*mut u8, *const u64>(a.ptr())) };
+                Some((val, b, 8))
+            } else {
+                None
+            }
+        }
+    }
+
     #[test]
     fn oneway_test() {
 
-        let mut ne = NetEngine::new(8, 100, 100);
+        let mut ne = NetEngine::<U64Protocol>::new();
         let srv_rx = ne.listen("127.0.0.1", 10000).unwrap();
         let cl = { ne.connect("127.0.0.1", 10000).unwrap().clone() };
 
@@ -125,8 +152,8 @@ use reactive::{Publisher, Subscriber};
         Thread::spawn(move|| {
             let mut rep = Box::new(Repeat::new(5u64));
             let mut map1 = Box::new(Map::new(|x| isize_to_strbuf(&x)));
-            let mut map2 = Box::new(Map::new(move |StreamBuf (buf, _)| StreamBuf (buf, tok)));
-            let mut trc  = Box::new(Trace::new());
+            let mut map2 = Box::new(Map::new(move | StreamBuf (buf, _) | StreamBuf (buf, tok)));
+            let mut trc  = Box::new(DoDebug::new());
             let mut sen = Box::new(Decoupler::new(dtx));
 
             trc.subscribe(sen);
@@ -142,7 +169,7 @@ use reactive::{Publisher, Subscriber};
             {
                 let mut recv = Box::new(Coupler::new(srv_rx));
                 let mut take = Box::new(Take::new(5));
-                let mut map3 = Box::new(Map::new(|x| strbuf_to_isize(x)));
+                let mut map3 = Box::new(Map::new(| ProtoMsg (x, _) | x ));
                 let mut coll = Box::new(Collect::new(&mut v));
 
                 map3.subscribe(coll);

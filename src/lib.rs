@@ -1,3 +1,7 @@
+// Copyright (C) 2015 <Rick Richardson r@12sidedtech.com>
+//
+// This software may be modified and distributed under the terms
+// of the MIT license.  See the LICENSE file for details.
 //! # Reactive Rust
 //! A reactive streams library in the vein of [reactive-streams.org](http://reactive-streams.org)
 //! with inspiration taken from [Elm](http://elm-lang.org)
@@ -37,6 +41,10 @@
 #![feature(slicing_syntax)]
 #![feature(unboxed_closures)]
 #![feature(unsafe_destructor)]
+#![feature(libc)]
+#![feature(core)]
+#![feature(io)]
+#![feature(collections)]
 
 extern crate core;
 extern crate mio;
@@ -62,6 +70,9 @@ pub mod reactor;
 pub mod net_stream;
 pub mod sendable;
 pub mod mmap_allocator;
+pub mod scheduler;
+#[macro_use]
+pub mod protocol;
 mod processorimpl;
 mod publisherimpl;
 mod processorext;
@@ -83,7 +94,7 @@ fn main() {
     use processor::{Map};
     use subscriber::{StdoutSubscriber, Decoupler};
     use reactive::{Publisher, Subscriber};
-    use std::io::Timer;
+    use std::old_io::Timer;
     use std::time::Duration;
     use std::sync::mpsc::{channel};
     use std::thread::Thread;

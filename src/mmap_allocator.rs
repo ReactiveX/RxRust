@@ -1,12 +1,17 @@
+// Copyright (C) 2015 <Rick Richardson r@12sidedtech.com>
+//
+// This software may be modified and distributed under the terms
+// of the MIT license.  See the LICENSE file for details.
 
 use std::mem;
 use std::ops::Drop;
-use std::io::FilePermission;
+use std::old_io::FilePermission;
 use std::fmt;
 use std::sync::atomic::{Ordering, AtomicUint};
 use std::path::Path;
 use nix::sys::{mman, stat};
 use nix::{fcntl, unistd};
+use nix::sys::stat::{Mode, S_IRWXU, S_IRWXG, S_IRWXO };
 use libc::{c_int, c_void};
 
 //when rust has allocator traits, this won't be necessary
@@ -15,6 +20,7 @@ use iobuf::Allocator;
 lazy_static! {
     static ref ALIGN: usize =  mem::size_of_val(&0us);
     static ref MAGIC: usize = 0x42424242;
+    static ref MODE_ALL : Mode = S_IRWXU | S_IRWXG | S_IRWXO;
 }
 
 impl Allocator for MappedRegion {
@@ -54,7 +60,7 @@ impl fmt::Show for MMapHeader {
 impl MappedRegion {
     pub fn new(basepath: &str, total_size: u64) -> Result<MappedRegion, String> {
         let fpath = Path::new(basepath);
-        let fd = fcntl::open(&fpath, fcntl::O_CREAT | fcntl::O_RDWR, FilePermission::all()).unwrap();
+        let fd = fcntl::open(&fpath, fcntl::O_CREAT | fcntl::O_RDWR, *MODE_ALL).unwrap();
         unistd::ftruncate(fd, total_size as i64).unwrap();
         let ptr = mman::mmap(0 as *mut c_void, total_size, mman::PROT_READ | mman::PROT_WRITE, mman::MAP_SHARED, fd, 0).unwrap();
         match mman::madvise(ptr as *const c_void, total_size, mman::MADV_SEQUENTIAL) {
@@ -75,7 +81,7 @@ impl MappedRegion {
 
     pub fn load(basepath: &str) -> Result<MappedRegion, String> {
         let fpath = Path::new(basepath);
-        let fd = fcntl::open(&fpath, fcntl::O_CREAT | fcntl::O_RDWR, FilePermission::all()).unwrap();
+        let fd = fcntl::open(&fpath, fcntl::O_CREAT | fcntl::O_RDWR, *MODE_ALL).unwrap();
         let fstat = stat::fstat(fd).unwrap();
         let ptr = mman::mmap(0 as *mut c_void, fstat.st_size as u64, mman::PROT_READ | mman::PROT_WRITE, mman::MAP_SHARED, fd, 0).unwrap();
         let headerptr : *mut MMapHeader = unsafe { mem::transmute(ptr) };
@@ -151,10 +157,10 @@ impl Drop for MappedRegion {
 
 mod test {
 
-use std::io::fs::mkdir_recursive;
+use std::old_io::fs::mkdir_recursive;
 use super::MappedRegion;
 use std::path::posix::Path;
-use std::io::FilePermission;
+use std::old_io::FilePermission;
 use std::mem;
 use super::ALIGN;
 struct TestObject {
@@ -171,7 +177,7 @@ struct TestObject {
 
 #[test]
 fn mmap_allocator_basic() {
-    use std::io::fs;
+    use std::old_io::fs;
     let two_jigabytes = 1024 * 1024 * 1024 * 2;
 
     mkdir_recursive(&"target/data".parse().unwrap(), FilePermission::from_bits(0o775).unwrap());
@@ -198,7 +204,7 @@ fn mmap_allocator_basic() {
 
 #[test]
 fn mmap_allocator_boundaries() {
-    use std::io::fs;
+    use std::old_io::fs;
     mkdir_recursive(&"target/data".parse().unwrap(), FilePermission::from_bits(0o775).unwrap());
 
     let one_k = 1024;

@@ -1,33 +1,39 @@
-use std::fmt::Show;
+// Copyright (C) 2015 <Rick Richardson r@12sidedtech.com>
+//
+// This software may be modified and distributed under the terms
+// of the MIT license.  See the LICENSE file for details.
+//
+
+use std::fmt::Debug;
 use reactive::{Publisher, Subscriber};
 use sendable::Sendable;
 
-pub struct Trace<'a, I> where I : Show {
+pub struct DoDebug<'a, I> where I : Debug {
     subscriber: Option<Box<Subscriber<Input=I> + 'a>>,
     index: Option<usize>
 }
 
-impl<'a, I> Trace<'a, I> where I : Show {
+impl<'a, I> DoDebug<'a, I> where I : Debug {
 
-    pub fn new() -> Trace<'a, I>
+    pub fn new() -> DoDebug<'a, I>
     {
-        Trace {
+        DoDebug {
             subscriber: None,
             index: None
         }
     }
 }
 
-impl<'a, I> Publisher<'a> for Trace<'a, I> where I : Show {
+impl<'a, I> Publisher<'a> for DoDebug<'a, I> where I : Debug {
     type Output = I;
-    fn subscribe<S>(&mut self, s: Box<S>) where S : Subscriber<Input=I> + 'a {
+    fn subscribe(&mut self, s: Box<Subscriber<Input=I> + 'a>) {
         let t: Box<Subscriber<Input=I>+'a> = s;
         self.subscriber = Some(t);
         self.subscriber.as_mut().unwrap().on_subscribe(0);
     }
 }
 
-impl<'a, I> Subscriber for Trace<'a, I> where I : Show {
+impl<'a, I> Subscriber for DoDebug<'a, I> where I : Debug {
     type Input = I;
     fn on_next(&mut self, t: I) -> bool {
         match self.subscriber.as_mut() {
@@ -41,18 +47,18 @@ impl<'a, I> Subscriber for Trace<'a, I> where I : Show {
     default_pass_error!();
 }
 
-pub struct TraceWhile<'a, I, F> where I : Show, F : Fn(&I) -> bool {
+pub struct DebugWhile<'a, I, F> where I : Debug, F : Fn(&I) -> bool {
     fun: F,
     subscriber: Option<Box<Subscriber<Input=I> + 'a>>,
     index: Option<usize>
 }
 
 
-impl<'a, I, F> TraceWhile<'a, I, F> where I : 'a + Show, F : Fn(&I) -> bool{
+impl<'a, I, F> DebugWhile<'a, I, F> where I : 'a + Debug, F : Fn(&I) -> bool{
 
-    pub fn new( f: F ) -> TraceWhile<'a, I, F>
+    pub fn new( f: F ) -> DebugWhile<'a, I, F>
     {
-        TraceWhile {
+        DebugWhile {
             fun: f,
             subscriber: None,
             index: None
@@ -60,16 +66,16 @@ impl<'a, I, F> TraceWhile<'a, I, F> where I : 'a + Show, F : Fn(&I) -> bool{
     }
 }
 
-impl<'a, I, F> Publisher<'a> for TraceWhile<'a, I, F> where I : Show, F : Fn(&I) -> bool  {
+impl<'a, I, F> Publisher<'a> for DebugWhile<'a, I, F> where I : Debug, F : Fn(&I) -> bool  {
     type Output = I;
-    fn subscribe<S>(&mut self, s: Box<S>) where S : Subscriber<Input=I> + 'a {
+    fn subscribe(&mut self, s: Box<Subscriber<Input=I> + 'a>) {
         let s: Box<Subscriber<Input=I>+'a> = s;
         self.subscriber = Some(s);
         self.subscriber.as_mut().unwrap().on_subscribe(0);
     }
 }
 
-impl<'a, I, F> Subscriber for TraceWhile<'a, I, F> where I : Show, F : Fn(&I) -> bool {
+impl<'a, I, F> Subscriber for DebugWhile<'a, I, F> where I : Debug, F : Fn(&I) -> bool {
     type Input = I;
 
     default_pass_subscribe!();
@@ -110,7 +116,7 @@ impl<'a, I, F> Do<'a, I, F> where F : Fn(&I) -> () {
 
 impl<'a, I, F> Publisher<'a> for Do<'a, I, F> where F : Fn(&I) -> () {
     type Output = I;
-    fn subscribe<S>(&mut self, s: Box<S>) where S : Subscriber<Input=I> + 'a {
+    fn subscribe(&mut self, s: Box<Subscriber<Input=I> + 'a>) {
         let s: Box<Subscriber<Input=I>+'a> = s;
         self.subscriber = Some(s);
         self.subscriber.as_mut().unwrap().on_subscribe(0);
@@ -159,7 +165,7 @@ impl<'a, I, O, F> Map<'a, I, O, F> where F : Fn(I) -> O {
 
 impl<'a, I, O, F> Publisher<'a> for Map<'a, I, O, F> where F : Fn(I) -> O {
     type Output = O;
-    fn subscribe<S>(&mut self, s: Box<S>) where S : Subscriber<Input=O> + 'a {
+    fn subscribe(&mut self, s: Box<Subscriber<Input=O> + 'a>) {
         let s: Box<Subscriber<Input=O>+'a> = s;
         self.subscriber = Some(s);
         self.subscriber.as_mut().unwrap().on_subscribe(0);
@@ -206,7 +212,7 @@ impl<'a, 'c, I, V, O, F> MapVal1<'a, 'c, I, V, O, F> where O : 'c, V : Clone, F 
 impl<'a, 'c, I, V, O, F> Publisher<'a> for MapVal1<'a, 'c, I, V, O, F> where O : 'c, V : Clone, F : Fn(I,&V) -> O {
     type Output = O;
 
-    fn subscribe<S>(&mut self, s: Box<S>) where S : Subscriber<Input=O> + 'a {
+    fn subscribe(&mut self, s: Box<Subscriber<Input=O> + 'a>) {
         let s: Box<Subscriber<Input=O>+'a> = s;
         self.subscriber = Some(s);
         self.subscriber.as_mut().unwrap().on_subscribe(0);
@@ -258,7 +264,7 @@ impl<'a, 'c, I, V, O, F> Reduce<'a, 'c, I, V, O, F> where O : 'c, V : Copy, F : 
 impl<'a, 'c, I, V, O, F> Publisher<'a> for Reduce<'a, 'c, I, V, O, F> where O : 'c, V : Copy, F : Fn(V,I) -> (V, O) {
     type Output = O;
 
-    fn subscribe<S>(&mut self, s: Box<S>) where S : Subscriber<Input=O> + 'a {
+    fn subscribe(&mut self, s: Box<Subscriber<Input=O> + 'a>) {
         let s: Box<Subscriber<Input=O>+'a> = s;
         self.subscriber = Some(s);
         self.subscriber.as_mut().unwrap().on_subscribe(0);
@@ -273,10 +279,10 @@ impl<'a, 'c, I, V, O, F> Subscriber for Reduce<'a, 'c, I, V, O, F> where O : 'c,
     default_pass_error!();
 
     fn on_next(&mut self, t: I) -> bool {
+        let (newstate, outval) = (self.fun)(self.state, t);
+        self.state = newstate;
         match self.subscriber.as_mut() {
-            Some(s) =>  { let (newstate, outval) = (self.fun)(self.state, t);
-                          self.state = newstate;
-                          s.on_next(outval) }
+            Some(s) =>  { s.on_next(outval) }
             None => {true}
         }
     }
@@ -309,7 +315,7 @@ impl<'a, I> Enumerate<'a, I> {
 impl<'a, I> Publisher<'a> for Enumerate<'a, I> {
     type Output = (I, u64);
 
-    fn subscribe<S>(&mut self, s: Box<S>) where S : Subscriber<Input=(I, u64)> + 'a {
+    fn subscribe(&mut self, s: Box<Subscriber<Input=(I, u64)> + 'a>) {
         let s: Box<Subscriber<Input=(I, u64)>+'a> = s;
         self.subscriber = Some(s);
         self.subscriber.as_mut().unwrap().on_subscribe(0);
@@ -367,7 +373,7 @@ Q : Sendable<Item=I> {
 
     type Output = I;
 
-    fn subscribe<S>(&mut self, s: Box<S>) where S : Subscriber<Input=I> + 'a {
+    fn subscribe(&mut self, s: Box<Subscriber<Input=I> + 'a>) {
         let s: Box<Subscriber<Input=I>+'a> = s;
         self.subscriber = Some(s);
         self.subscriber.as_mut().unwrap().on_subscribe(0);
@@ -417,7 +423,7 @@ impl<'a, I> Publisher<'a> for Unzip<'a, I>
 {
     type Output = I;
 
-    fn subscribe<S>(&mut self, s: Box<S>) where S : Subscriber<Input=I> + 'a {
+    fn subscribe(&mut self, s: Box<Subscriber<Input=I> + 'a>) {
         let s: Box<Subscriber<Input=I>+'a> = s;
         self.subscriber = Some(s);
         self.subscriber.as_mut().unwrap().on_subscribe(0);
@@ -451,7 +457,8 @@ pub struct Take<'a, O>
     subscriber: Option<Box<Subscriber<Input=O> + 'a>>,
     index: Option<usize>,
     count: usize,
-    max: usize
+    max: usize,
+    notified: bool
 }
 
 impl<'a, O> Take<'a, O> {
@@ -460,7 +467,8 @@ impl<'a, O> Take<'a, O> {
             index: None,
             subscriber: None,
             count: 0,
-            max: max
+            max: max,
+            notified: false
         }
     }
 }
@@ -469,7 +477,7 @@ impl<'a, O> Publisher<'a> for Take<'a, O>
 {
     type Output = O;
 
-    fn subscribe<S>(&mut self, s: Box<S>) where S : Subscriber<Input=O> + 'a {
+    fn subscribe(&mut self, s: Box<Subscriber<Input=O> + 'a>) {
         let s: Box<Subscriber<Input=O>+'a> = s;
         self.subscriber = Some(s);
         self.subscriber.as_mut().unwrap().on_subscribe(0);
@@ -487,7 +495,7 @@ impl<'a, O> Subscriber for Take<'a, O>
         match self.subscriber.as_mut() {
             Some(s) =>  {
                 self.count += 1;
-                if self.count > self.max { false }
+                if self.count > self.max { s.on_complete(false); self.notified = true; false }
                 else { s.on_next(t) }
             },
             None => {true}

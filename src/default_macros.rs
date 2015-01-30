@@ -1,3 +1,8 @@
+// Copyright (C) 2015 <Rick Richardson r@12sidedtech.com>
+//
+// This software may be modified and distributed under the terms
+// of the MIT license.  See the LICENSE file for details.
+
 
 #[macro_export]
 macro_rules! default_pass_error(
@@ -32,3 +37,16 @@ macro_rules! default_pass_subscribe (
         }
     )
 );
+
+#[macro_export]
+macro_rules! protocol_size {
+    ($($name:ident = $value:expr),+) => {$(
+        #[derive(Debug)]
+        struct $name;
+        impl HasSize for $name {
+            #[inline(always)]
+            fn size() -> u32 { $value }
+        }
+    )*}
+}
+

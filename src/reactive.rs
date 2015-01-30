@@ -1,5 +1,9 @@
-use std::ops::{Shl, Shr};
-use std::cell::RefCell;
+// Copyright (C) 2015 <Rick Richardson r@12sidedtech.com>
+//
+// This software may be modified and distributed under the terms
+// of the MIT license.  See the LICENSE file for details.
+
+
 
 pub trait Subscriber {
     type Input;
@@ -16,21 +20,36 @@ pub trait Subscriber {
     }
 }
 
-pub trait Publisher<'S> : Sized {
+pub trait Publisher<'a> {
     type Output;
-    fn subscribe<S>(&mut self, Box<S>) where S : Subscriber<Input=Self::Output>;
 
+    fn subscribe(&mut self, Box<Subscriber<Input=Self::Output> + 'a>);
+
+    /// The basic message event generation function
+    /// this is typically called in a loop
+    /// This version of the function can block
     fn next(&mut self) -> bool {
+        self.try_next()
+    }
+
+    /// The basic message event generation function
+    /// this is typically called in a loop
+    /// It is expected that this next will never block 
+    fn try_next(&mut self) -> bool {
         panic!("Unimplemented fn, presumably run() or next() is being attempted on a processor, not a publisher");
     }
 
+    /// Runs in a loop, expects that its publisher might block
     fn run(&mut self) {
+        debug!("Starting loop");
         loop {
             if ! self.next() {
                 break
             }
         }
+        debug!("Done with loop");
     }
+   
 }
 
 pub trait Processor<'a> : Subscriber + Publisher<'a> { }
